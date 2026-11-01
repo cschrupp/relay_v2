@@ -1,0 +1,13 @@
+goal: Add relay drift report
+base_sha: "988b8b9"
+allowed_paths:
+  - src/relay/drift/**
+  - tests/drift/**
+expected_lines:
+  source: 400
+  tests: 300
+acceptance_commands:
+  - uv run pytest tests/drift
+token_budget: 200000
+role: implementer
+tier: cheap

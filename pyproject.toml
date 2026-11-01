@@ -8,7 +8,10 @@ version = "0.0.1.dev0"
 description = "Keeps agent-built software faithful to its developer's design"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
-dependencies = []
+dependencies = [
+    "pydantic>=2.11,<3",
+    "pyyaml>=6.0.2,<7",
+]
 
 [project.scripts]
 relay = "relay.cli.main:main"

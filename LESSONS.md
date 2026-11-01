@@ -24,6 +24,25 @@ A one-line import contract in CI would have failed the first commit that broke
 layering. **Drift is caught by executable checks in short loops, not by more
 records.**
 
+### When the checks would have fired
+
+`relay drift history` replayed the first repository's 671 first-parent commits
+(22 September – 28 October 2026) against this repository's two day-one checks:
+
+| Day | Date | Commit | What first fired |
+| --- | --- | --- | --- |
+| 2 | 23 Sep | `babd0980` | First function over 80 lines (`_evaluate_one`, 150 lines; the package was 2,393 lines) |
+| 7 | 28 Sep | `9456b313` | First import cycle: `integrations → persistence → repository_sync`, the seed of the 12-package cycle |
+| 14 | 5 Oct | | The cycle reaches 7 packages |
+| 20 | 11 Oct | | 9 packages, including the UI (`board`) |
+| 30 | 21 Oct | | 12 packages |
+| 37 | 28 Oct | `375b599c` | A second cycle, `agent_runtime ↔ role_contracts`, arrives in one PR merge; 88 functions over 80 lines |
+
+Both checks would have stopped the drift in the first week, while the cycle was
+three packages and one commit old. Instead it grew for a month, long before it
+was felt. Reproduce with
+`relay drift history ../relay --rev 375b599c --root src/relay_engine`.
+
 ## Governance
 
 1. Govern consequential boundaries, not keystrokes. Reversible work proceeds; scope, risk, cost or external effects need a human decision.
