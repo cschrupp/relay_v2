@@ -1,0 +1,11 @@
+[importlinter]
+root_package = relay
+
+[importlinter:contract:layers]
+name = Relay layers: higher layers may import lower ones, never the reverse
+type = layers
+layers =
+    relay.cli
+    relay.loop
+    relay.drift | relay.runtime | relay.store
+    relay.domain
