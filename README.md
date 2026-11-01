@@ -44,7 +44,7 @@ See:
 Requires Python 3.14 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync --group dev
+uv sync --frozen --group dev
 uv run ruff format --check .
 uv run ruff check .
 uv run pyright
