@@ -7,10 +7,10 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 
+from relay.cli.format import format_history, format_report
 from relay.drift.git import GitError
-from relay.drift.report import DEFAULT_BUDGET, DriftError, DriftReport, build_report
-
-SHOWN_FUNCTIONS = 10
+from relay.drift.history import DEFAULT_EVERY, build_history
+from relay.drift.report import DEFAULT_BUDGET, DriftError, build_report
 
 
 def positive_int(text: str) -> int:
@@ -20,51 +20,46 @@ def positive_int(text: str) -> int:
     return value
 
 
+def add_measure_arguments(parser: argparse.ArgumentParser, rev_help: str) -> None:
+    parser.add_argument("repo", type=Path, help="path to a git repository")
+    parser.add_argument("--rev", default="HEAD", help=rev_help)
+    parser.add_argument("--root", help="package directory to measure, e.g. src/pkg")
+    parser.add_argument("--budget", type=positive_int, default=DEFAULT_BUDGET)
+    parser.add_argument("--json", action="store_true", help="print JSON")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="relay", description="Steer coding agents against drift.")
     commands = parser.add_subparsers(dest="command", required=True)
     drift = commands.add_parser("drift", help="measure structural drift")
     drift_commands = drift.add_subparsers(dest="drift_command", required=True)
     report = drift_commands.add_parser("report", help="drift metrics at one commit")
-    report.add_argument("repo", type=Path, help="path to a git repository")
-    report.add_argument("--rev", default="HEAD", help="commit to measure (default: HEAD)")
-    report.add_argument("--root", help="package directory to measure, e.g. src/pkg")
-    report.add_argument("--budget", type=positive_int, default=DEFAULT_BUDGET)
-    report.add_argument("--json", action="store_true", help="print the report as JSON")
+    add_measure_arguments(report, "commit to measure (default: HEAD)")
+    history = drift_commands.add_parser("history", help="when each drift metric first fired")
+    add_measure_arguments(history, "last commit of the history (default: HEAD)")
+    history.add_argument(
+        "--every", type=positive_int, default=DEFAULT_EVERY, help="sample every Nth commit"
+    )
     return parser
 
 
-def format_report(report: DriftReport) -> str:
-    """Render a report as a short human-readable table."""
-    lines = [f"{report.root} at {report.commit[:12]} ({report.date[:10]})", ""]
-    lines.append(f"Import cycles between top-level packages: {len(report.cycles)}")
-    lines += [f"  {len(cycle):>3} packages: {', '.join(cycle)}" for cycle in report.cycles]
-    lines += ["", f"Functions over {report.budget} lines: {len(report.oversized)}"]
-    for found in report.oversized[:SHOWN_FUNCTIONS]:
-        lines.append(f"  {found.lines:>5}  {found.path}:{found.line}  {found.name}")
-    if len(report.oversized) > SHOWN_FUNCTIONS:
-        hidden = len(report.oversized) - SHOWN_FUNCTIONS
-        lines.append(f"  ... and {hidden} more (--json lists all)")
-    lines += [
-        "",
-        f"Source: {report.source_lines:,} lines in {report.source_files} files",
-        f"Tests:  {report.test_lines:,} lines in {report.test_files} files",
-        "Largest files:",
-    ]
-    lines += [f"  {size.lines:>6,}  {size.path}" for size in report.largest_files]
-    if report.unparsable:
-        lines += ["", f"Could not parse: {', '.join(report.unparsable)}"]
-    return "\n".join(lines)
+def run(args: argparse.Namespace) -> str:
+    """Run the parsed command and return its output text."""
+    if args.drift_command == "history":
+        history = build_history(args.repo, args.rev, args.root, args.budget, args.every)
+        return json.dumps(asdict(history), indent=2) if args.json else format_history(history)
+    report = build_report(args.repo, args.rev, args.root, args.budget)
+    return json.dumps(asdict(report), indent=2) if args.json else format_report(report)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        report = build_report(args.repo, args.rev, args.root, args.budget)
+        output = run(args)
     except (GitError, DriftError) as error:
         print(f"relay: {error}", file=sys.stderr)
         return 2
-    print(json.dumps(asdict(report), indent=2) if args.json else format_report(report))
+    print(output)
     return 0
 
 

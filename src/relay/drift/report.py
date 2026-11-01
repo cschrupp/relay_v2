@@ -37,6 +37,7 @@ class DriftReport:
     test_lines: int
     largest_files: tuple[FileSize, ...]
     unparsable: tuple[str, ...]
+    skipped_symlinks: tuple[str, ...]
 
 
 def count_lines(text: str) -> int:
@@ -83,13 +84,19 @@ def build_report(
     if budget < 1:
         raise DriftError("the line budget must be at least 1")
     commit = resolve_commit(repo, rev)
-    python_files = [path for path in list_files(repo, commit) if path.endswith(".py")]
+    listing = list_files(repo, commit)
+    python_files = [path for path in listing.files if path.endswith(".py")]
     root = (root or detect_root(python_files)).strip("/").removeprefix("./")
     source_paths = [path for path in python_files if path.startswith(f"{root}/")]
     if not source_paths:
         raise DriftError(f"no Python files under {root} at {commit[:12]}")
     test_paths = [
         path for path in python_files if is_test_path(path) and not path.startswith(f"{root}/")
+    ]
+    skipped = [
+        path
+        for path in listing.symlinks
+        if path.endswith(".py") and (path.startswith(f"{root}/") or is_test_path(path))
     ]
     texts = read_files(repo, commit, source_paths + test_paths)
     sources = {path: texts[path] for path in source_paths}
@@ -120,4 +127,5 @@ def build_report(
         test_lines=sum(count_lines(texts[path]) for path in test_paths),
         largest_files=tuple(sizes[:LARGEST_FILES]),
         unparsable=tuple(sorted(unparsable)),
+        skipped_symlinks=tuple(sorted(skipped)),
     )

@@ -2,7 +2,10 @@
 
 import subprocess
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
+
+SYMLINK_MODE = b"120000"
 
 
 class GitError(RuntimeError):
@@ -33,10 +36,41 @@ def commit_date(repo: Path, sha: str) -> str:
     return run_git(repo, "show", "-s", "--format=%cI", sha).decode().strip()
 
 
-def list_files(repo: Path, sha: str) -> list[str]:
-    """Return every file path in the tree of sha."""
-    output = run_git(repo, "ls-tree", "-r", "-z", "--name-only", sha)
-    return [path.decode("utf-8") for path in output.split(b"\0") if path]
+@dataclass(frozen=True)
+class Commit:
+    sha: str
+    date: str
+    subject: str
+
+
+@dataclass(frozen=True)
+class TreeListing:
+    files: list[str]
+    symlinks: list[str]
+
+
+def list_files(repo: Path, sha: str) -> TreeListing:
+    """Return the regular file paths in the tree of sha, with symlinks listed apart."""
+    output = run_git(repo, "ls-tree", "-r", "-z", sha)
+    files: list[str] = []
+    symlinks: list[str] = []
+    for entry in filter(None, output.split(b"\0")):
+        meta, _, path = entry.partition(b"\t")
+        mode, kind, _ = meta.split(b" ")
+        if kind != b"blob":
+            continue
+        (symlinks if mode == SYMLINK_MODE else files).append(path.decode("utf-8"))
+    return TreeListing(files, symlinks)
+
+
+def first_parent_commits(repo: Path, rev: str) -> list[Commit]:
+    """Return the first-parent history of rev, oldest first."""
+    output = run_git(repo, "log", "--first-parent", "--reverse", "--format=%H%x1f%cI%x1f%s", rev)
+    commits: list[Commit] = []
+    for line in output.decode("utf-8", errors="replace").splitlines():
+        sha, date, subject = line.split("\x1f", 2)
+        commits.append(Commit(sha, date, subject))
+    return commits
 
 
 def read_files(repo: Path, sha: str, paths: Sequence[str]) -> dict[str, str]:

@@ -56,3 +56,20 @@ def test_errors_exit_2(repo: FixtureRepo, capsys: pytest.CaptureFixture[str]) ->
 def test_budget_must_be_positive() -> None:
     with pytest.raises(SystemExit):
         main(["drift", "report", ".", "--budget", "0"])
+
+
+def test_history_table_and_json(repo: FixtureRepo, capsys: pytest.CaptureFixture[str]) -> None:
+    repo.commit({"src/pkg/__init__.py": "", "src/pkg/a/__init__.py": ""}, message="clean")
+    sha = repo.commit(PROJECT, message="drift arrives")
+
+    table_code = main(["drift", "history", str(repo.path), "--every", "1"])
+    table = capsys.readouterr().out
+    json_code = main(["drift", "history", str(repo.path), "--json"])
+    history = json.loads(capsys.readouterr().out)
+
+    assert (table_code, json_code) == (0, 0)
+    assert "2 first-parent commits up to HEAD, sampled every 1" in table
+    assert "Final cycle 1: a, b" in table
+    assert "any import cycle" in table and "drift arrives" in table
+    assert {f["commit"] for f in history["firings"]} == {sha}
+    assert history["series"][-1]["oversized"] == 12
