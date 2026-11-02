@@ -10,6 +10,7 @@ from relay.domain import (
     DriftFinding,
     LineEstimate,
     MakeRule,
+    NetLines,
     Redirect,
     RunRecord,
 )
@@ -18,7 +19,7 @@ CARD = DriftCard(
     base_sha="988b8b9",
     result_sha="1e0ade8",
     expected_lines=LineEstimate(source=300, tests=150),
-    actual_lines=LineEstimate(source=382, tests=308),
+    actual_lines=NetLines(source=382, tests=308),
     findings=(
         DriftFinding(kind="net_lines", message="source 382 vs 300 expected"),
         DriftFinding(

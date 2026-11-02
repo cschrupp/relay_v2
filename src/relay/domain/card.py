@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from relay.domain.base import Frozen, LineEstimate, Sha, Text
+from relay.domain.base import Frozen, LineEstimate, NetLines, Sha, Text
 
 FindingKind = Literal[
     "new_cycle",
@@ -14,6 +14,7 @@ FindingKind = Literal[
     "outside_scope",
     "new_dependency",
     "edited_test",
+    "unsupported_rule",
 ]
 Severity = Literal["warning", "blocking"]
 
@@ -30,7 +31,7 @@ class DriftCard(Frozen):
     base_sha: Sha
     result_sha: Sha
     expected_lines: LineEstimate
-    actual_lines: LineEstimate
+    actual_lines: NetLines
     findings: tuple[DriftFinding, ...] = ()
 
     @property

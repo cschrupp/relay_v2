@@ -1,6 +1,6 @@
 """Value types shared by every layer. Imports nothing else from relay."""
 
-from relay.domain.base import LineEstimate, Role, Tier
+from relay.domain.base import LineEstimate, NetLines, Role, Tier
 from relay.domain.card import DriftCard, DriftFinding
 from relay.domain.packet import PacketError, WorkPacket, load_work_packet
 from relay.domain.steer import (
@@ -19,6 +19,7 @@ __all__ = [
     "DriftFinding",
     "LineEstimate",
     "MakeRule",
+    "NetLines",
     "PacketError",
     "Redirect",
     "Role",
