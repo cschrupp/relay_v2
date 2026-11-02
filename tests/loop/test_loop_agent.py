@@ -20,14 +20,12 @@ class StubClient:
         self.calls.append(f"create {spec.agent}")
         return "ses_1"
 
-    def prompt(self, session: str, text: str) -> int:
-        self.calls.append(f"prompt {text}")
-        return 4
-
-    def run_events(self, session: str, after: int) -> Iterator[SessionEvent]:
-        self.calls.append(f"events after {after}")
-        yield SessionEvent("5", "session.next.tool.called", {"tool": "edit"})
-        yield SessionEvent("6", "session.next.step.failed", {"error": {"message": "HTTP 400"}})
+    def run(self, session: str, prompt: str) -> Iterator[SessionEvent]:
+        self.calls.append(f"run {prompt}")
+        tool = {"type": "tool", "tool": "edit", "state": {"status": "completed"}}
+        yield SessionEvent("message.part.updated", {"part": tool})
+        error = {"name": "UnknownError", "data": {"message": "HTTP 400"}}
+        yield SessionEvent("session.error", {"error": error})
 
 
 def test_opencode_agent_reports_tools_and_failures() -> None:
@@ -38,9 +36,9 @@ def test_opencode_agent_reports_tools_and_failures() -> None:
     session = agent.start(SessionSpec(Path("/w"), "implementer", "p", "m"))
     turn = agent.turn(session, "do it")
 
-    assert client.calls == ["health", "create implementer", "prompt do it", "events after 4"]
+    assert client.calls == ["health", "create implementer", "run do it"]
     assert turn.failure == "HTTP 400"
-    assert shown == ["  tool: edit", "  step failed: HTTP 400"]
+    assert shown == ["  tool: edit (completed)", "  error: HTTP 400"]
 
 
 @pytest.mark.parametrize(
@@ -49,7 +47,8 @@ def test_opencode_agent_reports_tools_and_failures() -> None:
         ("Add a helper to low", "add-a-helper-to-low"),
         ("  Fix: the `relay tidy` lease!  ", "fix-the-relay-tidy-lease"),
         ("!!!", "packet"),
-        ("x" * 60, "x" * 40),
+        ("x" * 60, "x" * 30),
+        ("Add relay --version: it prints the version", "add-relay-version-it-prints"),
     ],
 )
 def test_slug(goal: str, expected: str) -> None:

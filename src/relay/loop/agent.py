@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from relay.runtime.opencode import OpenCodeClient, SessionSpec, Usage, as_object
+from relay.runtime.opencode import OpenCodeClient, SessionSpec, Usage, as_object, error_message
 
 
 @dataclass(frozen=True)
@@ -35,13 +35,14 @@ class OpenCodeAgent:
 
     def turn(self, session: str, prompt: str) -> TurnResult:
         failure: str | None = None
-        for event in self.client.run_events(session, self.client.prompt(session, prompt)):
-            if event.type == "session.next.tool.called":
-                self.show(f"  tool: {event.data.get('tool')}")
-            elif event.type == "session.next.step.failed":
-                error = as_object(event.data.get("error"))
-                failure = str(error.get("message") or event.data.get("error"))
-                self.show(f"  step failed: {failure}")
+        for event in self.client.run(session, prompt):
+            part = as_object(event.data.get("part"))
+            state = as_object(part.get("state"))
+            if part.get("type") == "tool" and state.get("status") in {"completed", "error"}:
+                self.show(f"  tool: {part.get('tool')} ({state.get('status')})")
+            elif event.type == "session.error":
+                failure = error_message(event)
+                self.show(f"  error: {failure}")
         return TurnResult(failure)
 
     def usage(self, session: str) -> Usage:

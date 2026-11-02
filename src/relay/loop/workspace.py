@@ -16,7 +16,7 @@ from relay.drift.card import is_rule_path
 from relay.drift.git import GitError, resolve_commit, run_git
 from relay.drift.report import is_test_path
 
-SLUG_LENGTH = 40
+SLUG_LENGTH = 30
 WORKTREE_DIRECTORY = "relay-worktrees"
 WRITE_BITS = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
 
@@ -34,8 +34,12 @@ class Workspace:
 
 
 def slug(text: str) -> str:
+    """Lowercase words joined by `-`, at most SLUG_LENGTH long, cut at a word boundary."""
     words = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return words[:SLUG_LENGTH].rstrip("-") or "packet"
+    if len(words) <= SLUG_LENGTH:
+        return words or "packet"
+    cut = words[: SLUG_LENGTH + 1].rfind("-")
+    return words[:cut] if cut > 0 else words[:SLUG_LENGTH]
 
 
 def branch_name(packet: WorkPacket) -> str:
@@ -87,6 +91,13 @@ def unprotect(paths: list[Path]) -> None:
     for path in paths:
         if path.is_file():
             path.chmod(path.stat().st_mode | stat.S_IWUSR)
+
+
+def has_work(workspace: Workspace) -> bool:
+    """Whether the packet branch holds anything: a commit past the base, or changed files."""
+    head = run_git(workspace.path, "rev-parse", "HEAD").decode().strip()
+    changed = run_git(workspace.path, "status", "--porcelain").strip()
+    return head != workspace.base_sha or bool(changed)
 
 
 def close_workspace(workspace: Workspace, keep_branch: bool) -> None:
