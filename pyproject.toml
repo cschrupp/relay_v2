@@ -9,6 +9,7 @@ description = "Keeps agent-built software faithful to its developer's design"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
+    "httpx>=0.28,<1",
     "pydantic>=2.11,<3",
     "pyyaml>=6.0.2,<7",
 ]
