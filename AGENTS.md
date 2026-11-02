@@ -17,6 +17,7 @@ given, never in this file.
   toolchain, a change to `.importlinter` or the size budget, or a decision the
   issue does not settle.
 - Never merge pull requests or push to main; the human merges.
+- Stage files by explicit path; never `git add -A` or `git add .`.
 
 ## Architecture
 

@@ -7,7 +7,7 @@ goal: >-
   (not a hard-coded string) and exits 0. Add a test in tests/cli/ that compares
   the output with importlib.metadata.version("relay"). See issue #21.
 issue: 21
-base_sha: "68c36247e6418f5abdc756146431788535107493"
+base_sha: "d593b9aa4fabb37ccebfa9ccccdca4c16fc78844"
 allowed_paths:
   - src/relay/cli/main.py
   - tests/cli/**

@@ -38,7 +38,7 @@ def test_opencode_agent_reports_tools_and_failures() -> None:
 
     assert client.calls == ["health", "create implementer", "run do it"]
     assert turn.failure == "HTTP 400"
-    assert shown == ["  tool: edit (completed)", "  error: HTTP 400"]
+    assert shown == ["  error: HTTP 400", "  Agent: 1 tool call (edit 1); files edited: none"]
 
 
 @pytest.mark.parametrize(

@@ -43,6 +43,10 @@ three packages and one commit old. Instead it grew for a month, long before it
 was felt. Reproduce with
 `relay drift history ../relay --rev 375b599c --root src/relay_engine`.
 
+**First steered run** (2 November 2026): issue #21 (`relay --version`) through
+`relay run`: 1 attempt, card clean, accepted; openrouter/deepseek/deepseek-v4.1-flash,
+23,056 tokens in and 1,826 out, US$0.0037.
+
 ## Governance
 
 1. Govern consequential boundaries, not keystrokes. Reversible work proceeds; scope, risk, cost or external effects need a human decision.
