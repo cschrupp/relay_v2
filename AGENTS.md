@@ -16,6 +16,7 @@ given, never in this file.
 - Stop and report when the task needs a new dependency, a change to the
   toolchain, a change to `.importlinter` or the size budget, or a decision the
   issue does not settle.
+- Never merge pull requests or push to main; the human merges.
 
 ## Architecture
 
