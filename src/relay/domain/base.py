@@ -17,8 +17,15 @@ class Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class NetLines(Frozen):
+    """Measured net lines of source and of tests; negative when a change removes code."""
+
+    source: int
+    tests: int
+
+
 class LineEstimate(Frozen):
-    """Net lines of source and of tests, kept apart so test-heavy work does not read as bloat."""
+    """Expected net lines, kept apart so test-heavy work does not read as bloat."""
 
     source: Count
     tests: Count

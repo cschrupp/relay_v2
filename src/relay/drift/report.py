@@ -129,3 +129,11 @@ def build_report(
         unparsable=tuple(sorted(unparsable)),
         skipped_symlinks=tuple(sorted(skipped)),
     )
+
+
+def source_trees(repo: Path, sha: str, root: str) -> dict[str, ast.Module]:
+    """Parsed Python files under root at sha, keyed by path relative to root."""
+    listing = list_files(repo, sha)
+    paths = [path for path in listing.files if path.endswith(".py") and path.startswith(f"{root}/")]
+    trees, _ = parse_sources(read_files(repo, sha, paths), root)
+    return trees

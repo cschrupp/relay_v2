@@ -91,3 +91,40 @@ def read_files(repo: Path, sha: str, paths: Sequence[str]) -> dict[str, str]:
         texts[path] = output[start:end].decode("utf-8", errors="replace")
         position = end + 1
     return texts
+
+
+@dataclass(frozen=True)
+class Change:
+    """One file changed between two commits; line counts are None for binary files."""
+
+    status: str
+    path: str
+    added: int | None
+    deleted: int | None
+
+
+def diff_changes(repo: Path, base: str, result: str) -> list[Change]:
+    """Return every file changed from base to result, renames shown as delete plus add."""
+    names = run_git(repo, "diff", "-z", "--no-renames", "--name-status", base, result)
+    fields = names.decode("utf-8").split("\0")
+    statuses = dict(zip(fields[1::2], fields[0::2], strict=False))
+    numstat = run_git(repo, "diff", "-z", "--no-renames", "--numstat", base, result)
+    changes: list[Change] = []
+    for entry in filter(None, numstat.decode("utf-8").split("\0")):
+        added, deleted, path = entry.split("\t", 2)
+        changes.append(
+            Change(
+                status=statuses.get(path, "M")[:1],
+                path=path,
+                added=None if added == "-" else int(added),
+                deleted=None if deleted == "-" else int(deleted),
+            )
+        )
+    return changes
+
+
+def read_optional(repo: Path, sha: str, path: str) -> str | None:
+    """Return the text of path at sha, or None when the commit has no such regular file."""
+    if path not in list_files(repo, sha).files:
+        return None
+    return read_files(repo, sha, [path])[path]
