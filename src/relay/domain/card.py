@@ -15,6 +15,7 @@ FindingKind = Literal[
     "new_dependency",
     "edited_test",
     "unsupported_rule",
+    "branch_budget",
 ]
 Severity = Literal["warning", "blocking"]
 

@@ -41,8 +41,10 @@ report the conflict instead.
   path, no registries for fixed sets, no plugin systems, no base classes
   without a shared invariant, no config switches for hypothetical cases.
 - Use `raise`, not `assert`, for anything that guards correctness.
-- Never edit tests to make failing code pass. If a test looks wrong, stop and
-  explain why.
+- Never edit existing tests to make failing code pass. If a deliberate change I
+  approved requires a test change, change only the minimum, keep the original
+  assertion's intent, and list each edited test under "Test changes" in the PR.
+  If a test looks wrong, stop and explain why.
 - Never commit secrets.
 
 ## Checks

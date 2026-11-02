@@ -3,6 +3,7 @@
 from relay.domain.base import LineEstimate, NetLines, Role, Tier
 from relay.domain.card import DriftCard, DriftFinding
 from relay.domain.packet import PacketError, WorkPacket, load_work_packet
+from relay.domain.rules import Rules, RulesError, parse_rules
 from relay.domain.steer import (
     STEER_DECISION,
     Accept,
@@ -23,9 +24,12 @@ __all__ = [
     "PacketError",
     "Redirect",
     "Role",
+    "Rules",
+    "RulesError",
     "RunRecord",
     "SteerDecision",
     "Tier",
     "WorkPacket",
     "load_work_packet",
+    "parse_rules",
 ]
