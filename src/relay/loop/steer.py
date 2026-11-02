@@ -217,12 +217,14 @@ def steer(
         decision = decide(repo, console, needs_reason, result.rules)
         result.records.append(
             RunRecord(
-                model=model,
+                provider=settings.provider,
+                model=settings.model,
                 role=packet.role,
                 tier=packet.tier,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 cost_usd=cost,
+                cost_source=usage.cost_source if cost is not None else None,
                 outcome=OUTCOMES[decision.kind],
                 accept_reason=decision.reason if isinstance(decision, Accept) else None,
             )
