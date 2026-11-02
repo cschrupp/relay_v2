@@ -1,6 +1,7 @@
 """The `relay` command."""
 
 import argparse
+import importlib.metadata
 import json
 import sys
 from collections.abc import Sequence
@@ -36,6 +37,11 @@ def add_measure_arguments(parser: argparse.ArgumentParser, rev_help: str) -> Non
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="relay", description="Steer coding agents against drift.")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"relay {importlib.metadata.version('relay')}",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     drift = commands.add_parser("drift", help="measure structural drift")
     drift_commands = drift.add_subparsers(dest="drift_command", required=True)
