@@ -9,7 +9,10 @@ from relay.domain.base import Count, Frozen, Role, Text, Tier
 
 
 class Accept(Frozen):
+    """Accept the result. A card with blocking findings needs a reason."""
+
     kind: Literal["accept"] = "accept"
+    reason: Text | None = None
 
 
 class Redirect(Frozen):
@@ -24,8 +27,14 @@ class MakeRule(Frozen):
     spec: Text
 
 
-SteerDecision = Annotated[Accept | Redirect | MakeRule, Field(discriminator="kind")]
-STEER_DECISION: TypeAdapter[Accept | Redirect | MakeRule] = TypeAdapter(SteerDecision)
+class Reject(Frozen):
+    """Drop the packet: its worktree and branch are removed."""
+
+    kind: Literal["reject"] = "reject"
+
+
+SteerDecision = Annotated[Accept | Redirect | MakeRule | Reject, Field(discriminator="kind")]
+STEER_DECISION: TypeAdapter[Accept | Redirect | MakeRule | Reject] = TypeAdapter(SteerDecision)
 
 Outcome = Literal["accepted", "redirected", "rejected", "failed", "budget_exceeded"]
 
@@ -38,3 +47,4 @@ class RunRecord(Frozen):
     output_tokens: Count
     cost_usd: Annotated[Decimal, Field(ge=0)] | None = None
     outcome: Outcome
+    accept_reason: Text | None = None

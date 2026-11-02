@@ -40,6 +40,7 @@ class WorkPacket(Frozen):
     token_budget: Annotated[int, Field(gt=0)]
     role: Role
     tier: Tier
+    issue: Annotated[int, Field(gt=0)] | None = None
 
 
 def load_work_packet(path: Path) -> WorkPacket:
