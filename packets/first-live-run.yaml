@@ -1,0 +1,26 @@
+# First live packet for `relay run` (issue #21).
+# Run: relay run packets/first-live-run.yaml --model PROVIDER/MODEL
+# base_sha must include .opencode/agents/implementer.md (added with this file):
+# after this file's PR merges, set base_sha to that merge commit.
+goal: >-
+  Add `relay --version`: it prints "relay <version>" using importlib.metadata
+  (not a hard-coded string) and exits 0. Add a test in tests/cli/ that compares
+  the output with importlib.metadata.version("relay"). See issue #21.
+issue: 21
+base_sha: "68c36247e6418f5abdc756146431788535107493"
+allowed_paths:
+  - src/relay/cli/main.py
+  - tests/cli/**
+expected_lines:
+  source: 10
+  tests: 15
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 200000
+role: implementer
+tier: cheap
