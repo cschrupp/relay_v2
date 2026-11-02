@@ -14,6 +14,7 @@ FindingKind = Literal[
     "outside_scope",
     "new_dependency",
     "edited_test",
+    "edited_rule",
     "unsupported_rule",
     "branch_budget",
 ]

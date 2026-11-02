@@ -3,11 +3,12 @@
 Findings, in card order: new import cycles, layer violations against the base
 commit's `.importlinter`, functions over budget (new or grown), net lines against the
 packet's estimate, files outside the allowed paths, new dependencies in
-`pyproject.toml`, and existing test files edited or deleted.
+`pyproject.toml`, existing test files edited or deleted, and rule files changed
+(`.importlinter`, anything under `.relay/`).
 
 Net lines count Python files only, split into tests (by `is_test_path`) and source.
 A count drifts when it exceeds the estimate by more than a quarter, and by at least
-10 lines. Layer violations and existing tests that lose or change lines are blocking:
+10 lines. Layer violations, rule file changes and tests that lose or change lines are blocking:
 they break rules the developer set. A test file that only gains lines, and everything
 else, is a warning for the developer to judge.
 """
@@ -31,6 +32,7 @@ from relay.drift.report import (
 from relay.drift.scope import path_allowed
 
 LAYER_CONFIG = ".importlinter"
+RULES_DIRECTORY = ".relay/"
 PYPROJECT = "pyproject.toml"
 MIN_ALLOWANCE = 10
 
@@ -116,6 +118,26 @@ def test_finding(path: str, message: str, severity: Severity) -> DriftFinding:
     return DriftFinding(kind="edited_test", message=message, severity=severity, path=path)
 
 
+def is_rule_path(path: str) -> bool:
+    """Files that hold the developer's rules: the layer contracts and `.relay/`."""
+    return path == LAYER_CONFIG or path.startswith(RULES_DIRECTORY)
+
+
+def rule_findings(changes: list[Change]) -> list[DriftFinding]:
+    """Any change to a rule file is blocking: rules change only by the developer's hand."""
+    verbs = {"A": "added", "D": "deleted"}
+    return [
+        DriftFinding(
+            kind="edited_rule",
+            severity="blocking",
+            message=f"rule file {verbs.get(change.status, 'edited')}",
+            path=change.path,
+        )
+        for change in changes
+        if is_rule_path(change.path)
+    ]
+
+
 def dependency_findings(repo: Path, base: str, result: str) -> list[DriftFinding]:
     old = declared_dependencies(read_optional(repo, base, PYPROJECT))
     new = declared_dependencies(read_optional(repo, result, PYPROJECT)) - old
@@ -190,6 +212,7 @@ def build_card(
         *scope_findings(changes, packet.allowed_paths),
         *dependency_findings(repo, base, result),
         *test_findings(changes),
+        *rule_findings(changes),
     ]
     return DriftCard(
         base_sha=base,

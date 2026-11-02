@@ -3,6 +3,7 @@
 Defined so far:
 - `max_branches`: how many branches besides the default one may exist. When absent,
   the budget is the number of open pull requests plus `BRANCH_ALLOWANCE`.
+- `rules`: rules the developer made while steering (`relay run`, "rule <spec>").
 
 `relay run` (#8) extends this schema with the rules the developer makes while steering.
 """
@@ -12,7 +13,7 @@ from typing import Annotated
 import yaml
 from pydantic import Field, ValidationError
 
-from relay.domain.base import Frozen
+from relay.domain.base import Frozen, Text
 
 RULES_PATH = ".relay/rules.yaml"
 BRANCH_ALLOWANCE = 2
@@ -22,8 +23,15 @@ class RulesError(ValueError):
     """The rules file is invalid."""
 
 
+class RuleNote(Frozen):
+    """A rule the developer made while steering, in their own words."""
+
+    text: Text
+
+
 class Rules(Frozen):
     max_branches: Annotated[int, Field(ge=0)] | None = None
+    rules: tuple[RuleNote, ...] = ()
 
     def branch_budget(self, open_pull_requests: int | None) -> int | None:
         """The branch budget, or None when it depends on an unknown open PR count."""
