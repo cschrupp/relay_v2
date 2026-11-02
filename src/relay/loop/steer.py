@@ -29,7 +29,14 @@ from relay.domain.steer import Outcome
 from relay.drift.card import build_card
 from relay.loop.agent import Agent, TurnResult
 from relay.loop.checks import CheckResult, run_checks
-from relay.loop.present import format_card, initial_prompt, pull_request_body, redirect_prompt
+from relay.loop.present import (
+    Spend,
+    format_card,
+    initial_prompt,
+    pull_request_body,
+    pull_request_title,
+    redirect_prompt,
+)
 from relay.loop.publish import Publisher
 from relay.loop.rules import apply_rule
 from relay.loop.workspace import (
@@ -66,6 +73,7 @@ class PacketResult:
     cards: list[DriftCard] = field(default_factory=lambda: [])
     rules: list[str] = field(default_factory=lambda: [])
     pull_request: str | None = None
+    title: str = ""
 
 
 @dataclass
@@ -120,7 +128,13 @@ def spent_since(now: Usage, before: Usage | None) -> tuple[int, int, Decimal | N
 
 
 def attempt(
-    workspace: Workspace, packet: WorkPacket, agent: Agent, session: str, prompt: str, number: int
+    workspace: Workspace,
+    packet: WorkPacket,
+    agent: Agent,
+    session: str,
+    prompt: str,
+    title: str,
+    number: int,
 ) -> tuple[DriftCard, list[CheckResult], TurnResult]:
     """One agent turn with tests and rules read-only, committed and measured."""
     protected = protect(workspace)
@@ -128,7 +142,7 @@ def attempt(
         turn = agent.turn(session, prompt)
     finally:
         unprotect(protected)
-    head = commit_attempt(workspace, f"relay: {packet.goal} (attempt {number})")
+    head = commit_attempt(workspace, f"relay: {title} (attempt {number})")
     card = build_card(workspace.path, packet, head)
     return card, run_checks(workspace.path, packet.acceptance_commands), turn
 
@@ -140,11 +154,17 @@ def run_packet(
     agent: Agent,
     publisher: Publisher,
     console: Console,
+    issue_titles: Callable[[int], str | None] | None = None,
 ) -> PacketResult:
-    """Run the packet until the developer accepts or rejects it."""
+    """Run the packet until the developer accepts or rejects it.
+
+    `issue_titles` looks up the packet's issue title for the commit and PR title.
+    """
+    issue_title = issue_titles(packet.issue) if issue_titles and packet.issue else None
     workspace = open_workspace(repo, packet)
     packet = packet.model_copy(update={"base_sha": workspace.base_sha})
     result = PacketResult(workspace.base_sha, workspace.branch)
+    result.title = pull_request_title(packet, issue_title)
     console.show(f"Packet branch {workspace.branch} at {workspace.base_sha}")
     spec = SessionSpec(workspace.path, settings.agent, settings.provider, settings.model)
     try:
@@ -180,21 +200,24 @@ def steer(
     """Attempt, show the card, decide; repeat until accepted or rejected."""
     repo = workspace.repo
     prompt, before = initial_prompt(packet), None
+    model = f"{settings.provider}/{settings.model}"
     while True:
+        number = len(result.cards) + 1
         card, checks, turn = attempt(
-            workspace, packet, agent, session, prompt, len(result.cards) + 1
+            workspace, packet, agent, session, prompt, result.title, number
         )
-        card_text = format_card(card, checks, turn.failure)
+        usage = agent.usage(session)
+        input_tokens, output_tokens, cost = spent_since(usage, before)
+        before = usage
+        spend = Spend(model, input_tokens, output_tokens, cost, usage.cost_source)
+        card_text = format_card(card, checks, turn.failure, spend)
         console.show(card_text)
         result.cards.append(card)
         needs_reason = card.blocking or not all(check.passed for check in checks)
         decision = decide(repo, console, needs_reason, result.rules)
-        usage = agent.usage(session)
-        input_tokens, output_tokens, cost = spent_since(usage, before)
-        before = usage
         result.records.append(
             RunRecord(
-                model=f"{settings.provider}/{settings.model}",
+                model=model,
                 role=packet.role,
                 tier=packet.tier,
                 input_tokens=input_tokens,
@@ -208,8 +231,13 @@ def steer(
             prompt = redirect_prompt(decision.text, card_text)
             continue
         if isinstance(decision, Accept):
-            body = pull_request_body(packet, workspace.base_sha, card_text, decision.reason)
-            result.pull_request = publisher.publish(workspace, packet.goal, body)
+            total = Spend(
+                model, usage.input_tokens, usage.output_tokens, usage.cost_usd, usage.cost_source
+            )
+            body = pull_request_body(
+                packet, workspace.base_sha, card_text, decision.reason, total, number
+            )
+            result.pull_request = publisher.publish(workspace, result.title, body)
             console.show(f"Pull request: {result.pull_request}")
         close_workspace(workspace, keep_branch=isinstance(decision, Accept))
         return result

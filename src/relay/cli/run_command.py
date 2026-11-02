@@ -6,7 +6,7 @@ from pathlib import Path
 from relay.domain import PacketError, load_work_packet
 from relay.drift.git import GitError
 from relay.loop.agent import OpenCodeAgent
-from relay.loop.publish import GitHubPublisher, PublishError
+from relay.loop.publish import GitHubPublisher, PublishError, issue_title
 from relay.loop.steer import AgentSettings, Console, run_packet
 from relay.loop.workspace import WorkspaceError
 from relay.runtime.opencode import OpenCodeClient, OpenCodeError
@@ -38,7 +38,15 @@ def run_command(args: argparse.Namespace) -> tuple[str, int]:
         client = OpenCodeClient(args.opencode)
         try:
             agent = OpenCodeAgent(client, console.show)
-            result = run_packet(args.repo, packet, settings, agent, GitHubPublisher(), console)
+            result = run_packet(
+                args.repo,
+                packet,
+                settings,
+                agent,
+                GitHubPublisher(),
+                console,
+                lambda number: issue_title(args.repo, number),
+            )
         finally:
             client.close()
     except (PacketError, WorkspaceError, OpenCodeError, PublishError, GitError) as error:

@@ -1,6 +1,7 @@
 """Publishing an accepted packet: push its branch and open a pull request."""
 
 import subprocess
+from pathlib import Path
 from typing import Protocol
 
 from relay.drift.git import run_git
@@ -14,6 +15,17 @@ class PublishError(RuntimeError):
 
 class Publisher(Protocol):
     def publish(self, workspace: Workspace, title: str, body: str) -> str: ...
+
+
+def issue_title(repo: Path, number: int) -> str | None:
+    """The GitHub issue's title via `gh`, or None when it cannot be read."""
+    command = ["gh", "issue", "view", str(number), "--json", "title", "--jq", ".title"]
+    try:
+        done = subprocess.run(command, cwd=repo, capture_output=True, text=True, timeout=30)
+    except OSError, subprocess.TimeoutExpired:
+        return None
+    title = done.stdout.strip()
+    return title if done.returncode == 0 and title else None
 
 
 class GitHubPublisher:
