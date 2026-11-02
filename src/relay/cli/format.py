@@ -1,7 +1,9 @@
 """Human-readable rendering of drift reports and histories."""
 
 from relay.drift.history import DriftHistory
+from relay.drift.hygiene import Hygiene
 from relay.drift.report import DriftReport
+from relay.drift.tidy import TidyAction
 
 SHOWN_FUNCTIONS = 10
 SUBJECT_WIDTH = 60
@@ -54,3 +56,41 @@ def format_history(history: DriftHistory) -> str:
     lines += ["", f"# is the position on first-parent history (0 = first of {history.commits})."]
     lines.append("--json adds the sampled series of counts.")
     return "\n".join(lines)
+
+
+def format_hygiene(hygiene: Hygiene) -> str:
+    """Render the branch hygiene section."""
+    default = hygiene.default_branch
+    unknown = "unknown (no PR data from gh)"
+    budget = "unknown" if hygiene.budget is None else str(hygiene.budget)
+    without_pr = hygiene.without_open_pr
+    prunable = sum(tree.prunable for tree in hygiene.worktrees)
+    lines = [
+        f"Branch hygiene (default branch {default})",
+        f"  Branches besides {default}: {hygiene.branches} "
+        f"({hygiene.local_branches} local refs, {hygiene.remote_branches} remote refs)",
+        f"  Budget: {budget}; open PRs: "
+        + (unknown if hygiene.open_pull_requests is None else str(hygiene.open_pull_requests)),
+        f"  Merged but not deleted: {len(hygiene.merged)}",
+        f"  Without an open PR: {unknown if without_pr is None else len(without_pr)}",
+        f"  No commits in {hygiene.stale_days} days: {len(hygiene.stale)}",
+        f"  Extra worktrees: {len(hygiene.worktrees)} ({prunable} prunable)",
+    ]
+    lines += [f"  Drift: {finding.message}" for finding in hygiene.findings]
+    return "\n".join(lines)
+
+
+def format_tidy(actions: list[TidyAction], prs_known: bool, applying: bool) -> list[str]:
+    """Render the tidy plan, one line per ref."""
+    verb = "Deleting" if applying else "Dry run:"
+    lines = [f"{verb} {len(actions)} branch refs can go"]
+    width = max((len(action.ref) for action in actions), default=0)
+    for action in actions:
+        archived = f"; archived as archive/{action.name} first" if action.archive else ""
+        lines.append(f"  {action.ref:<{width}}  {action.reason}{archived}")
+    if not prs_known:
+        lines.append("PR state unknown (no PR data from gh): only merged branches are listed.")
+    if not applying and actions:
+        lines.append("Nothing was changed. Remote branches are as of the last fetch;")
+        lines.append("--apply fetches first, then deletes only branches that have not moved.")
+    return lines
