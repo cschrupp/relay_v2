@@ -13,6 +13,7 @@ from loop_fixture import (
 )
 
 from relay.domain import Accept, MakeRule, Redirect, Reject, parse_rules
+from relay.loop.agent import TurnResult
 from relay.loop.steer import PacketResult, parse_decision, run_packet
 from relay.loop.workspace import WorkspaceError
 from relay.runtime.opencode import OpenCodeError, SessionSpec, Usage
@@ -205,3 +206,21 @@ def test_failure_mid_run_keeps_the_work_and_says_where(repo: Path) -> None:
     assert worktrees(repo) == 2
     assert git(repo, "branch", "--list", BRANCH) != ""
     assert f"Kept for inspection: branch {BRANCH}" in console.text()
+
+
+class SilentModelAgent(FakeAgent):
+    """The model never runs: the first turn fails before changing anything."""
+
+    def turn(self, session: str, prompt: str) -> TurnResult:
+        raise OpenCodeError("OpenCode went idle without running a step with p/m")
+
+
+def test_first_turn_failing_before_any_change_leaves_nothing_behind(repo: Path) -> None:
+    console = ScriptedConsole()
+
+    with pytest.raises(OpenCodeError, match="without running a step"):
+        run(repo, SilentModelAgent(), console)
+
+    assert worktrees(repo) == 1
+    assert git(repo, "branch", "--list", BRANCH) == ""
+    assert f"Stopped before any change; removed {BRANCH}" in console.text()

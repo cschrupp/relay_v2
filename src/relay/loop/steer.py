@@ -36,6 +36,7 @@ from relay.loop.workspace import (
     Workspace,
     close_workspace,
     commit_attempt,
+    has_work,
     open_workspace,
     protect,
     unprotect,
@@ -154,6 +155,10 @@ def run_packet(
     try:
         return steer(workspace, packet, settings, agent, session, publisher, console, result)
     except Exception:
+        if not has_work(workspace):
+            close_workspace(workspace, keep_branch=False)
+            console.show(f"Stopped before any change; removed {workspace.branch} and its worktree.")
+            raise
         console.show(
             f"Stopped. Kept for inspection: branch {workspace.branch}, worktree {workspace.path}.\n"
             f"Remove with: git worktree remove --force {workspace.path} && "

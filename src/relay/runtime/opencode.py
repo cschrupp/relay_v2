@@ -1,17 +1,18 @@
-"""Drive one OpenCode agent session over OpenCode's v2 HTTP API (`/api/...`).
+"""Drive one OpenCode agent session over OpenCode's session HTTP API.
 
-Each session names its OpenCode agent (the role) and its provider and model explicitly;
-nothing is inherited from the server's defaults. A run is: create the session, admit a
-prompt, stream the session's durable events from that prompt on until the agent loop is
-idle, then read token usage and the cost OpenCode reports.
+This is the API `opencode run` uses (`/session`, `/session/{id}/prompt_async`, `/event`).
+OpenCode 1.18 also has a v2 API (`/api/session`), but its runner only sees providers in
+the v2 model registry, so models from providers you signed in to (OpenRouter, for
+example) fail there with "Model unavailable" while the CLI runs them fine.
 
-"Idle" is decided by OpenCode's active-session list, checked after every finished step
-and whenever the event stream goes quiet. The stream is resumed from the last event id
-when it drops, so no event is lost.
+Each session names its OpenCode agent (the role) and its provider and model explicitly.
+A turn subscribes to the directory's event stream, admits the prompt, yields the
+session's events and ends at `session.idle`. If the stream goes quiet, the session's
+status decides whether to keep waiting. Usage is the session's cumulative tokens and
+the cost OpenCode reports.
 """
 
 import json
-import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal
@@ -23,10 +24,9 @@ import httpx
 
 from relay.runtime.sse import parse_sse
 
-STEP_BOUNDARIES = frozenset({"session.next.step.ended", "session.next.step.failed"})
-DEFAULT_IDLE_CHECK_SECONDS = 5.0
-QUIET_CHECKS_BEFORE_IDLE = 3
+DEFAULT_IDLE_CHECK_SECONDS = 30.0
 REQUEST_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+BUSY_STATES = frozenset({"busy", "retry"})
 
 CostSource = Literal["runtime"]
 
@@ -49,7 +49,6 @@ class SessionSpec:
 
 @dataclass(frozen=True)
 class SessionEvent:
-    id: str | None
     type: str
     data: dict[str, Any]
 
@@ -73,27 +72,41 @@ def as_count(value: object) -> int:
     return int(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0
 
 
-def to_event(frame_event: str | None, frame_id: str | None, text: str) -> SessionEvent | None:
-    """Decode one durable event frame; frames that are not JSON objects are skipped.
-
-    OpenCode puts the event's sequence in `durable.seq`, not in the SSE `id:` field; that
-    sequence is the event id, so a dropped stream resumes with `after=<seq>`.
-    """
+def to_event(text: str) -> SessionEvent | None:
+    """Decode one `{type, properties}` frame; anything else is skipped."""
     try:
         payload = as_object(json.loads(text))
     except json.JSONDecodeError:
         return None
-    kind = payload.get("type") or frame_event
+    kind = payload.get("type")
     if not isinstance(kind, str):
         return None
-    sequence = as_object(payload.get("durable")).get("seq")
-    event_id = str(sequence) if isinstance(sequence, int) else frame_id
-    data = as_object(payload.get("data")) or payload
-    return SessionEvent(event_id, kind, data)
+    return SessionEvent(kind, as_object(payload.get("properties")))
+
+
+def event_session(event: SessionEvent) -> str | None:
+    info, part = as_object(event.data.get("info")), as_object(event.data.get("part"))
+    for container in (event.data, info, part):
+        session = container.get("sessionID")
+        if isinstance(session, str):
+            return session
+    return None
+
+
+def error_message(event: SessionEvent) -> str:
+    """The readable message of a `session.error` event."""
+    error = as_object(event.data.get("error"))
+    message = as_object(error.get("data")).get("message") or error.get("name")
+    return str(message or "unknown error")
+
+
+def is_step_start(event: SessionEvent) -> bool:
+    part = as_object(event.data.get("part"))
+    return event.type == "message.part.updated" and part.get("type") == "step-start"
 
 
 def usage_from(session: dict[str, Any]) -> Usage:
-    """Token usage and the cost OpenCode reports for a v2 session (source "runtime")."""
+    """Token usage and the cost OpenCode reports for a session (source "runtime")."""
     tokens = as_object(session.get("tokens"))
     cache = as_object(tokens.get("cache"))
     cost = session.get("cost")
@@ -109,6 +122,19 @@ def usage_from(session: dict[str, Any]) -> Usage:
     )
 
 
+def no_step_error(spec: SessionSpec, error: str | None) -> OpenCodeError:
+    """Explain a turn in which OpenCode never started a model step, with what to check."""
+    model = f"{spec.provider}/{spec.model}"
+    reason = f": {error}" if error else ""
+    return OpenCodeError(
+        f"OpenCode went idle without running a step with {model}{reason}\n"
+        "Check:\n"
+        f'  1. opencode run --model {model} "reply with ok"   (does the model answer?)\n'
+        "  2. restart the server with `opencode serve --print-logs` and read its error\n"
+        f"  3. `opencode models {spec.provider}` lists {spec.model}"
+    )
+
+
 class OpenCodeClient:
     """One OpenCode server. Not thread-safe; use one client per run."""
 
@@ -117,58 +143,41 @@ class OpenCodeClient:
         base_url: str,
         transport: httpx.BaseTransport | None = None,
         idle_check_seconds: float = DEFAULT_IDLE_CHECK_SECONDS,
-        reconnect_delay: float = 0.5,
     ) -> None:
         self.http = httpx.Client(base_url=base_url, transport=transport, timeout=REQUEST_TIMEOUT)
         self.idle_check_seconds = idle_check_seconds
-        self.reconnect_delay = reconnect_delay
+        self.sessions: dict[str, SessionSpec] = {}
 
     def close(self) -> None:
         self.http.close()
 
     def request(
-        self, method: str, path: str, body: object = None, expect: int = 200
+        self, method: str, path: str, directory: Path, body: object = None, expect: int = 200
     ) -> httpx.Response:
+        params = {"directory": str(directory)}
         try:
-            response = self.http.request(method, path, json=body)
+            response = self.http.request(method, path, params=params, json=body)
         except httpx.HTTPError as error:
             raise OpenCodeError(f"{method} {path} failed: {error}") from error
         if response.status_code != expect:
-            detail = response.text[:200]
-            message = f"{method} {path} returned {response.status_code}: {detail}"
+            message = f"{method} {path} returned {response.status_code}: {response.text[:200]}"
             raise OpenCodeError(message, response.status_code)
         return response
 
-    def data(self, response: httpx.Response) -> dict[str, Any]:
-        try:
-            payload = as_object(response.json())
-        except ValueError as error:
-            raise OpenCodeError(f"{response.url.path} returned invalid JSON") from error
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            raise OpenCodeError(f"{response.url.path} returned no data object")
-        return cast(dict[str, Any], data)
-
     def check_health(self) -> None:
-        payload = as_object(self.request("GET", "/api/health").json())
+        try:
+            payload = as_object(self.http.get("/global/health").json())
+        except (httpx.HTTPError, ValueError) as error:
+            raise OpenCodeError(f"GET /global/health failed: {error}") from error
         if payload.get("healthy") is not True:
             raise OpenCodeError(f"OpenCode reports itself unhealthy: {payload}")
 
     def agents(self, directory: Path) -> list[str]:
         """Agents OpenCode knows for a directory, including the project's own."""
-        params = {"location[directory]": str(directory)}
-        try:
-            response = self.http.get("/api/agent", params=params)
-        except httpx.HTTPError as error:
-            raise OpenCodeError(f"GET /api/agent failed: {error}") from error
-        if response.status_code != 200:
-            raise OpenCodeError(
-                f"GET /api/agent returned {response.status_code}", response.status_code
-            )
-        rows: object = as_object(response.json()).get("data")
+        rows: object = self.request("GET", "/agent", directory).json()
         if not isinstance(rows, list):
             return []
-        return [str(as_object(row).get("id")) for row in cast(list[object], rows)]
+        return [str(as_object(row).get("name")) for row in cast(list[object], rows)]
 
     def create_session(self, spec: SessionSpec) -> str:
         """Create a session with the spec's agent, provider and model; return its id.
@@ -181,81 +190,83 @@ class OpenCodeClient:
             raise OpenCodeError(
                 f"OpenCode has no agent {spec.agent!r} here (available: {available})"
             )
-        body = {
-            "agent": spec.agent,
-            "model": {"id": spec.model, "providerID": spec.provider},
-            "location": {"directory": str(spec.directory)},
-        }
-        session = self.data(self.request("POST", "/api/session", body))
+        body = {"agent": spec.agent, "model": {"id": spec.model, "providerID": spec.provider}}
+        session = as_object(self.request("POST", "/session", spec.directory, body).json())
         model = as_object(session.get("model"))
         confirmed = (
-            as_object(session.get("location")).get("directory") == str(spec.directory)
+            session.get("directory") == str(spec.directory)
+            and session.get("agent") == spec.agent
             and (model.get("providerID"), model.get("id")) == (spec.provider, spec.model)
-            and session.get("agent", spec.agent) == spec.agent
         )
         session_id = session.get("id")
         if not isinstance(session_id, str) or not confirmed:
             raise OpenCodeError(f"OpenCode did not confirm the requested session: {session}")
+        self.sessions[session_id] = spec
         return session_id
 
-    def prompt(self, session_id: str, text: str) -> int:
-        """Admit a prompt and return its admission sequence number."""
-        path = f"/api/session/{quote(session_id, safe='')}/prompt"
-        receipt = self.data(self.request("POST", path, {"prompt": {"text": text}}))
-        sequence = receipt.get("admittedSeq")
-        if not isinstance(sequence, int):
-            raise OpenCodeError(f"prompt receipt has no admission sequence: {receipt}")
-        return sequence
+    def spec_for(self, session: str) -> SessionSpec:
+        if session not in self.sessions:
+            raise OpenCodeError(f"session {session} was not created by this client")
+        return self.sessions[session]
 
-    def events(self, session_id: str, after: str | None) -> Iterator[SessionEvent]:
-        """Stream durable events after a sequence; ends when the stream closes or goes quiet."""
-        path = f"/api/session/{quote(session_id, safe='')}/event"
-        params = {"after": after} if after is not None else {}
+    def prompt(self, session: str, text: str) -> None:
+        spec = self.spec_for(session)
+        body = {
+            "agent": spec.agent,
+            "model": {"providerID": spec.provider, "modelID": spec.model},
+            "parts": [{"type": "text", "text": text}],
+        }
+        path = f"/session/{quote(session, safe='')}/prompt_async"
+        self.request("POST", path, spec.directory, body, expect=204)
+
+    def is_busy(self, session: str) -> bool:
+        directory = self.spec_for(session).directory
+        statuses = as_object(self.request("GET", "/session/status", directory).json())
+        return as_object(statuses.get(session)).get("type") in BUSY_STATES
+
+    def stream(self, session: str, prompt: str | None) -> Iterator[SessionEvent]:
+        """The session's events from one connection; sends the prompt once subscribed."""
+        params = {"directory": str(self.spec_for(session).directory)}
         timeout = httpx.Timeout(10.0, read=self.idle_check_seconds)
         try:
-            with self.http.stream("GET", path, params=params, timeout=timeout) as response:
+            with self.http.stream("GET", "/event", params=params, timeout=timeout) as response:
                 if response.status_code != 200:
-                    response.read()
-                    raise OpenCodeError(f"GET {path} returned {response.status_code}")
+                    raise OpenCodeError(f"GET /event returned {response.status_code}")
+                if prompt is not None:
+                    self.prompt(session, prompt)
                 for frame in parse_sse(response.iter_lines()):
-                    event = to_event(frame.event, frame.id, frame.data)
-                    if event is not None:
+                    event = to_event(frame.data)
+                    if event is not None and event_session(event) == session:
                         yield event
+                        if event.type == "session.idle":
+                            return
         except httpx.ReadTimeout:
             return
         except httpx.HTTPError as error:
-            raise OpenCodeError(f"GET {path} failed: {error}") from error
+            raise OpenCodeError(f"GET /event failed: {error}") from error
 
-    def is_active(self, session_id: str) -> bool:
-        return session_id in self.data(self.request("GET", "/api/session/active"))
-
-    def run_events(self, session_id: str, after: int) -> Iterator[SessionEvent]:
-        """Yield the events of the run admitted at `after` until the agent loop is idle."""
-        cursor, stepped, quiet = str(after), False, 0
-        while True:
-            seen = False
-            for event in self.events(session_id, cursor):
-                cursor, seen, quiet = event.id or cursor, True, 0
+    def run(self, session: str, prompt: str) -> Iterator[SessionEvent]:
+        """Admit a prompt and yield the session's events until it is idle again."""
+        pending: str | None = prompt
+        stepped, error, idle = False, None, False
+        while not idle:
+            for event in self.stream(session, pending):
+                stepped = stepped or is_step_start(event)
+                if event.type == "session.error":
+                    error = error_message(event)
+                idle = event.type == "session.idle"
                 yield event
-                if event.type in STEP_BOUNDARIES:
-                    stepped = True
-                    if not self.is_active(session_id):
-                        return
-            quiet += 0 if seen else 1
-            if not self.is_active(session_id):
-                if stepped:
-                    return
-                if quiet >= QUIET_CHECKS_BEFORE_IDLE:
-                    message = f"session {session_id} went idle without running a step"
-                    raise OpenCodeError(f"{message}; see the OpenCode server log")
-            if not seen:
-                time.sleep(self.reconnect_delay)
+            pending = None
+            idle = idle or not self.is_busy(session)
+        if not stepped:
+            raise no_step_error(self.spec_for(session), error)
 
-    def interrupt(self, session_id: str) -> None:
-        """Stop the session's active run; a no-op when it is already idle."""
-        self.request("POST", f"/api/session/{quote(session_id, safe='')}/interrupt", expect=204)
+    def interrupt(self, session: str) -> None:
+        """Abort the session's running turn; a no-op when it is idle."""
+        path = f"/session/{quote(session, safe='')}/abort"
+        self.request("POST", path, self.spec_for(session).directory)
 
-    def usage(self, session_id: str) -> Usage:
-        return usage_from(
-            self.data(self.request("GET", f"/api/session/{quote(session_id, safe='')}"))
-        )
+    def usage(self, session: str) -> Usage:
+        path = f"/session/{quote(session, safe='')}"
+        payload = self.request("GET", path, self.spec_for(session).directory).json()
+        return usage_from(as_object(payload))
