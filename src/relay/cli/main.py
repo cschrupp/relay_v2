@@ -15,7 +15,7 @@ from relay.drift.git import GitError, read_optional
 from relay.drift.history import DEFAULT_EVERY, build_history
 from relay.drift.hygiene import DEFAULT_STALE_DAYS, build_hygiene, pull_requests
 from relay.drift.report import DEFAULT_BUDGET, DriftError, build_report
-from relay.drift.tidy import apply_action, plan_tidy
+from relay.drift.tidy import apply_action, plan_tidy, refresh_remotes
 
 
 def positive_int(text: str) -> int:
@@ -72,39 +72,42 @@ def run_report(args: argparse.Namespace) -> str:
     return f"{format_report(report)}\n\n{format_hygiene(hygiene)}"
 
 
-def run_tidy(args: argparse.Namespace) -> str:
+def run_tidy(args: argparse.Namespace) -> tuple[str, int]:
+    if args.apply:
+        refresh_remotes(args.repo)
     prs = pull_requests(args.repo)
     actions = plan_tidy(args.repo, prs, datetime.now(UTC), args.stale_days)
     lines = format_tidy(actions, prs is not None, args.apply)
-    if args.apply:
-        for action in actions:
-            try:
-                lines.append(f"  {apply_action(args.repo, action)}")
-            except GitError as error:
-                lines.append(f"Stopped: {error}")
-                break
-    return "\n".join(lines)
+    if not args.apply:
+        return "\n".join(lines), 0
+    for action in actions:
+        try:
+            lines.append(f"  {apply_action(args.repo, action)}")
+        except GitError as error:
+            lines.append(f"Stopped at {action.ref}; the lines above were done. Error: {error}")
+            return "\n".join(lines), 2
+    return "\n".join(lines), 0
 
 
-def run(args: argparse.Namespace) -> str:
-    """Run the parsed command and return its output text."""
+def run(args: argparse.Namespace) -> tuple[str, int]:
+    """Run the parsed command and return its output text and exit code."""
     if args.command == "tidy":
         return run_tidy(args)
     if args.drift_command == "history":
         history = build_history(args.repo, args.rev, args.root, args.budget, args.every)
-        return json.dumps(asdict(history), indent=2) if args.json else format_history(history)
-    return run_report(args)
+        return (json.dumps(asdict(history), indent=2) if args.json else format_history(history)), 0
+    return run_report(args), 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        output = run(args)
+        output, code = run(args)
     except (GitError, DriftError, RulesError) as error:
         print(f"relay: {error}", file=sys.stderr)
         return 2
     print(output)
-    return 0
+    return code
 
 
 if __name__ == "__main__":

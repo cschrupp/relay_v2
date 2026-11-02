@@ -5,8 +5,9 @@ import pytest
 from hygiene_fixture import RemoteRepo
 
 from relay.cli.main import main
+from relay.drift.git import GitError
 from relay.drift.hygiene import PullRequest
-from relay.drift.tidy import apply_action, plan_tidy
+from relay.drift.tidy import TidyAction, apply_action, plan_tidy
 
 NOW = datetime.now(UTC)
 LATER = NOW + timedelta(days=30)
@@ -118,3 +119,54 @@ def test_drift_report_has_a_hygiene_section(
     out = capsys.readouterr().out
     assert "Branch hygiene (default branch main)" in out
     assert "Drift: 1 branches besides main, budget 0" in out
+
+
+def test_remote_branch_moved_after_planning_is_skipped_not_deleted(remote: RemoteRepo) -> None:
+    remote.branch("old", merged=False, local=False)
+    [action] = plan_tidy(remote.repo.path, [], LATER)
+    new_sha = remote.push_from_elsewhere("old")
+
+    result = apply_action(remote.repo.path, action)
+
+    assert result.endswith("skipped refs/remotes/origin/old: moved since planning")
+    assert remote.origin_sha("old") == new_sha
+
+
+def test_apply_fetches_before_planning(
+    remote: RemoteRepo, capsys: pytest.CaptureFixture[str]
+) -> None:
+    remote.branch("done", merged=True, local=False)
+    remote.branch("gone", merged=True, local=False)
+    new_sha = remote.push_from_elsewhere("done")
+    remote.push_from_elsewhere("gone", delete=True)
+
+    code = main(["tidy", str(remote.repo.path), "--apply"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Deleting 0 branch refs can go" in out
+    assert remote.origin_sha("done") == new_sha
+
+
+def test_failure_reports_what_was_done_and_exits_non_zero(
+    remote: RemoteRepo, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remote.branch("first", merged=True, local=False)
+    remote.branch("second", merged=True, local=False)
+    calls: list[str] = []
+
+    def flaky(repo: Path, action: TidyAction) -> str:
+        if calls:
+            raise GitError("git push failed: remote hung up")
+        calls.append(action.ref)
+        return apply_action(repo, action)
+
+    monkeypatch.setattr("relay.cli.main.apply_action", flaky)
+
+    code = main(["tidy", str(remote.repo.path), "--apply"])
+
+    out = capsys.readouterr().out
+    assert code == 2
+    assert f"  deleted {calls[0]}" in out
+    assert "the lines above were done. Error: git push failed: remote hung up" in out
+    assert len(remote.remote_branches()) == 2

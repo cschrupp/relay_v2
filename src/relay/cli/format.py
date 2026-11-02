@@ -91,5 +91,6 @@ def format_tidy(actions: list[TidyAction], prs_known: bool, applying: bool) -> l
     if not prs_known:
         lines.append("PR state unknown (no PR data from gh): only merged branches are listed.")
     if not applying and actions:
-        lines.append("Nothing was changed. Re-run with --apply to delete.")
+        lines.append("Nothing was changed. Remote branches are as of the last fetch;")
+        lines.append("--apply fetches first, then deletes only branches that have not moved.")
     return lines

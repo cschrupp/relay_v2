@@ -8,6 +8,9 @@ with an open PR, and any branch checked out in a worktree.
 Before a ref that is not contained in the default branch is deleted, its tip is tagged
 `archive/<name>` (or `archive/<name>-<sha7>` if that tag already points elsewhere) and
 the tag is pushed to the ref's remote, or to `origin` for a local branch when one exists.
+
+Applying fetches every remote first (`refresh_remotes`) and deletes remote branches with
+a lease on the planned commit, so commits pushed after planning are never deleted.
 """
 
 from dataclasses import dataclass
@@ -84,8 +87,33 @@ def archive_tag(repo: Path, action: TidyAction) -> str:
     raise GitError(f"cannot create an archive tag for {action.name}")
 
 
+class BranchMoved(GitError):
+    """A remote branch no longer points at the commit the plan was made from."""
+
+
+def refresh_remotes(repo: Path) -> None:
+    """Fetch every remote with --prune, so the plan sees the remote branches as they are."""
+    for remote in run_git(repo, "remote").decode().split():
+        run_git(repo, "fetch", "-q", "--prune", remote)
+
+
+def delete_remote_branch(repo: Path, remote: str, name: str, sha: str) -> None:
+    """Delete a remote branch only if it still points at sha (a lease on the planned commit)."""
+    branch = f"refs/heads/{name}"
+    try:
+        run_git(repo, "push", "-q", f"--force-with-lease={branch}:{sha}", remote, f":{branch}")
+    except GitError:
+        current = run_git(repo, "ls-remote", remote, branch).decode().split()
+        if current and current[0] != sha:
+            raise BranchMoved(f"{remote}/{name} moved since planning") from None
+        raise
+
+
 def apply_action(repo: Path, action: TidyAction) -> str:
-    """Archive if needed, then delete one ref; return what was done."""
+    """Archive if needed, then delete one ref; return what was done.
+
+    A remote branch that moved since planning is left alone and reported as skipped.
+    """
     remotes = run_git(repo, "remote").decode().split()
     push_to = action.remote or ("origin" if "origin" in remotes else None)
     done = ""
@@ -96,6 +124,9 @@ def apply_action(repo: Path, action: TidyAction) -> str:
         done = f"tagged {tag}{' and pushed it' if push_to else ' (no remote to push to)'}; "
     if action.remote is None:
         run_git(repo, "branch", "-D", action.name)
-    else:
-        run_git(repo, "push", "-q", action.remote, "--delete", action.name)
+        return f"{done}deleted {action.ref}"
+    try:
+        delete_remote_branch(repo, action.remote, action.name, action.sha)
+    except BranchMoved:
+        return f"{done}skipped {action.ref}: moved since planning"
     return f"{done}deleted {action.ref}"
