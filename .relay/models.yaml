@@ -1,0 +1,21 @@
+# Model routing for `relay run` (see src/relay/domain/models.py).
+# Prices are left out: OpenCode reports OpenRouter's cost for each session.
+implementer:
+  cheap:
+    provider: openrouter
+    model: deepseek/deepseek-v4.1-flash
+    family: deepseek
+  strong:
+    provider: openrouter
+    model: anthropic/claude-sonnet-5.5
+    family: claude
+architect:
+  strong:
+    provider: openrouter
+    model: anthropic/claude-sonnet-5.5
+    family: claude
+reviewer:
+  strong:
+    provider: openrouter
+    model: openai/gpt-5.5
+    family: gpt
