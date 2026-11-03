@@ -1,0 +1,28 @@
+# Measurement task 4 of 12 (issue #35), configuration B.
+# Run: relay run packets/measure/04-duplication-finding.yaml --model openrouter/anthropic/claude-sonnet-5.5
+# Before running, set base_sha to main's head so the task starts from current work.
+goal: >-
+  Add a `duplication` warning to the drift card: a block of 6 or more consecutive
+  non-blank, non-comment lines added in the change's Python files that also appears
+  (after stripping indentation) elsewhere in the result, in the change or in the
+  base. Report each duplicate once, with both locations. Read files through git
+  objects like the other card metrics. See issue #35.
+issue: 35
+base_sha: "39b9e563a2f93f24110be859cf9e203bcacbc3a8"
+allowed_paths:
+  - src/relay/drift/**
+  - src/relay/domain/card.py
+  - tests/drift/**
+expected_lines:
+  source: 110
+  tests: 80
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 500000
+role: implementer
+tier: cheap

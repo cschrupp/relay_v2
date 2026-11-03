@@ -1,0 +1,25 @@
+# Measurement task 11 of 12 (issue #42), configuration A and C.
+# Run: relay run packets/measure/11-card-ordering.yaml   (A); for C, see the tracking issue
+# Before running, set base_sha to main's head so the task starts from current work.
+goal: >-
+  `format_card` lists blocking findings first, then warnings, each in kind order.
+  When one kind has more than 3 findings, show the first 3 and a line `... and N
+  more <kind>`. The card's data is unchanged; only its text. See issue #42.
+issue: 42
+base_sha: "39b9e563a2f93f24110be859cf9e203bcacbc3a8"
+allowed_paths:
+  - src/relay/loop/present.py
+  - tests/loop/**
+expected_lines:
+  source: 40
+  tests: 40
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 200000
+role: implementer
+tier: cheap

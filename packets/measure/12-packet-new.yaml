@@ -1,0 +1,34 @@
+# Measurement task 12 of 12 (issue #43), configuration A and C.
+# Run: relay run packets/measure/12-packet-new.yaml   (A); for C, see the tracking issue
+# Before running, set base_sha to main's head so the task starts from current work.
+goal: >-
+  Add `relay packet new ISSUE [--repo PATH] [--out PATH]`: read the GitHub issue
+  with `gh`, and write a packet YAML with the goal (title plus the issue's `## Goal`
+  section), allowed paths (the `## Allowed paths` list), expected source and test
+  lines (from `## Expected size` when it states them, else left for the developer),
+  the standard acceptance commands, role implementer, tier cheap, and base_sha set
+  to the default branch's head. When a section is missing, stop and name it, writing
+  nothing. Validate the packet with the packet model before writing; refuse to
+  overwrite an existing file. See issue #43.
+issue: 43
+base_sha: "39b9e563a2f93f24110be859cf9e203bcacbc3a8"
+allowed_paths:
+  - src/relay/cli/**
+  - src/relay/loop/**
+  - src/relay/domain/**
+  - tests/cli/**
+  - tests/loop/**
+  - tests/domain/**
+expected_lines:
+  source: 110
+  tests: 80
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 500000
+role: implementer
+tier: cheap

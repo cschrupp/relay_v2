@@ -1,0 +1,31 @@
+# Measurement task 8 of 12 (issue #39), configuration B.
+# Run: relay run packets/measure/08-escalation-agent-check.yaml --model openrouter/anthropic/claude-sonnet-5.5
+# Before running, set base_sha to main's head so the task starts from current work.
+goal: >-
+  `relay run` checks the starting agent only when its session is created, and the
+  escalation route's agent not until the cascade escalates, after tokens are spent.
+  Before the first attempt, check that the escalation agent exists on the OpenCode
+  server (`OpenCodeClient.agents`, as `create_session` does) and that its
+  provider/model is listed by the server. If not, stop before the first attempt with
+  a message naming the missing agent or model, `.opencode/agents/` and `opencode
+  models <provider>`. See issue #39.
+issue: 39
+base_sha: "39b9e563a2f93f24110be859cf9e203bcacbc3a8"
+allowed_paths:
+  - src/relay/loop/**
+  - src/relay/runtime/opencode.py
+  - tests/loop/**
+  - tests/runtime/**
+expected_lines:
+  source: 35
+  tests: 40
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 300000
+role: implementer
+tier: cheap
