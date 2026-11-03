@@ -208,7 +208,8 @@ def run_packet(
         record_failure(log)
         raise
     try:
-        return steer(workspace, packet, settings, agent, session, publisher, console, result, log)
+        run = Steering(workspace, packet, settings, agent, session, publisher, console, result, log)
+        return steer(run)
     except Exception:
         record_failure(log)
         if not has_work(workspace):
@@ -223,65 +224,102 @@ def run_packet(
         raise
 
 
-def steer(
-    workspace: Workspace,
-    packet: WorkPacket,
-    settings: AgentSettings,
-    agent: Agent,
-    session: str,
-    publisher: Publisher,
-    console: Console,
-    result: PacketResult,
-    log: RunLog | None = None,
-) -> PacketResult:
+@dataclass
+class Steering:
+    """What stays fixed while one packet is steered."""
+
+    workspace: Workspace
+    packet: WorkPacket
+    settings: AgentSettings
+    agent: Agent
+    session: str
+    publisher: Publisher
+    console: Console
+    result: PacketResult
+    log: RunLog | None = None
+
+    @property
+    def model(self) -> str:
+        return f"{self.settings.provider}/{self.settings.model}"
+
+
+@dataclass(frozen=True)
+class Shown:
+    """One attempt as the developer saw it."""
+
+    card: DriftCard
+    card_text: str
+    needs_reason: bool
+    record: RunRecord
+    usage: Usage
+
+
+def show_attempt(run: Steering, number: int, prompt: str, before: Usage | None) -> Shown:
+    """Run one attempt, show its card with what it cost, and record it."""
+    card, checks, turn = attempt(
+        run.workspace, run.packet, run.agent, run.session, prompt, run.result.title, number
+    )
+    usage = run.agent.usage(run.session)
+    input_tokens, output_tokens, cost = spent_since(usage, before)
+    spend = Spend(run.model, input_tokens, output_tokens, cost, usage.cost_source)
+    card_text = format_card(card, checks, turn.failure, spend)
+    run.console.show(card_text)
+    run.result.cards.append(card)
+    record = RunRecord(
+        provider=run.settings.provider,
+        model=run.settings.model,
+        role=run.packet.role,
+        tier=run.packet.tier,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost,
+        cost_source=usage.cost_source if cost is not None else None,
+    )
+    if run.log is not None:
+        run.log.attempt(number, record, card)
+    needs_reason = card.blocking or not all(check.passed for check in checks)
+    return Shown(card, card_text, needs_reason, record, usage)
+
+
+def ask_decision(run: Steering, number: int, shown: Shown) -> Accept | Redirect | Reject:
+    """The developer's decision on a shown attempt, recorded with its outcome."""
+    noted = partial(run.log.decision, number) if run.log is not None else unrecorded
+    repo = run.workspace.repo
+    decision = decide(repo, run.console, shown.needs_reason, run.result.rules, noted)
+    reason = decision.reason if isinstance(decision, Accept) else None
+    update = {"outcome": OUTCOMES[decision.kind], "accept_reason": reason}
+    run.result.records.append(shown.record.model_copy(update=update))
+    return decision
+
+
+def conclude(run: Steering, decision: Accept | Reject, shown: Shown, number: int) -> None:
+    """Publish an accepted packet, record the outcome and remove the worktree."""
+    if isinstance(decision, Accept):
+        usage = shown.usage
+        total = Spend(
+            run.model, usage.input_tokens, usage.output_tokens, usage.cost_usd, usage.cost_source
+        )
+        body = pull_request_body(
+            run.packet, run.workspace.base_sha, shown.card_text, decision.reason, total, number
+        )
+        run.result.pull_request = run.publisher.publish(run.workspace, run.result.title, body)
+        run.console.show(f"Pull request: {run.result.pull_request}")
+    if run.log is not None:
+        outcome = "accepted" if isinstance(decision, Accept) else "rejected"
+        run.log.finish(outcome, run.result.pull_request)
+    close_workspace(run.workspace, keep_branch=isinstance(decision, Accept))
+
+
+def steer(run: Steering) -> PacketResult:
     """Attempt, show the card, decide; repeat until accepted or rejected."""
-    repo = workspace.repo
-    prompt, before = initial_prompt(packet), None
-    model = f"{settings.provider}/{settings.model}"
+    prompt, before = initial_prompt(run.packet), None
     while True:
-        number = len(result.cards) + 1
-        card, checks, turn = attempt(
-            workspace, packet, agent, session, prompt, result.title, number
-        )
-        usage = agent.usage(session)
-        input_tokens, output_tokens, cost = spent_since(usage, before)
-        before = usage
-        spend = Spend(model, input_tokens, output_tokens, cost, usage.cost_source)
-        card_text = format_card(card, checks, turn.failure, spend)
-        console.show(card_text)
-        result.cards.append(card)
-        record = RunRecord(
-            provider=settings.provider,
-            model=settings.model,
-            role=packet.role,
-            tier=packet.tier,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=cost,
-            cost_source=usage.cost_source if cost is not None else None,
-        )
-        if log is not None:
-            log.attempt(number, record, card)
-        needs_reason = card.blocking or not all(check.passed for check in checks)
-        noted = partial(log.decision, number) if log is not None else unrecorded
-        decision = decide(repo, console, needs_reason, result.rules, noted)
-        reason = decision.reason if isinstance(decision, Accept) else None
-        update = {"outcome": OUTCOMES[decision.kind], "accept_reason": reason}
-        result.records.append(record.model_copy(update=update))
+        number = len(run.result.cards) + 1
+        shown = show_attempt(run, number, prompt, before)
+        before = shown.usage
+        decision = ask_decision(run, number, shown)
         if isinstance(decision, Redirect):
-            prompt = redirect_prompt(decision.text, card_text)
+            prompt = redirect_prompt(decision.text, shown.card_text)
             continue
-        if isinstance(decision, Accept):
-            total = Spend(
-                model, usage.input_tokens, usage.output_tokens, usage.cost_usd, usage.cost_source
-            )
-            body = pull_request_body(
-                packet, workspace.base_sha, card_text, decision.reason, total, number
-            )
-            result.pull_request = publisher.publish(workspace, result.title, body)
-            console.show(f"Pull request: {result.pull_request}")
-        if log is not None:
-            outcome = "accepted" if isinstance(decision, Accept) else "rejected"
-            log.finish(outcome, result.pull_request)
-        close_workspace(workspace, keep_branch=isinstance(decision, Accept))
-        return result
+        conclude(run, decision, shown, number)
+        return run.result
