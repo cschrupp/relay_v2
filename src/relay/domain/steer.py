@@ -37,14 +37,22 @@ SteerDecision = Annotated[Accept | Redirect | MakeRule | Reject, Field(discrimin
 STEER_DECISION: TypeAdapter[Accept | Redirect | MakeRule | Reject] = TypeAdapter(SteerDecision)
 
 Outcome = Literal["accepted", "redirected", "rejected", "failed", "budget_exceeded"]
+CostSource = Literal["runtime", "price_table"]
 
 
 class RunRecord(Frozen):
+    """One attempt: who ran it, what it used, and how the developer decided.
+
+    `outcome` is None while the decision is pending (the card is shown, not yet decided).
+    """
+
+    provider: Text
     model: Text
     role: Role
     tier: Tier
     input_tokens: Count
     output_tokens: Count
     cost_usd: Annotated[Decimal, Field(ge=0)] | None = None
-    outcome: Outcome
+    cost_source: CostSource | None = None
+    outcome: Outcome | None = None
     accept_reason: Text | None = None

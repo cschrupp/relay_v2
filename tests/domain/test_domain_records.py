@@ -31,6 +31,7 @@ CARD = DriftCard(
     ),
 )
 RUN = RunRecord(
+    provider="anthropic",
     model="anthropic/claude-sonnet-5-5",
     role="implementer",
     tier="cheap",
