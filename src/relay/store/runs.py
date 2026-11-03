@@ -33,8 +33,8 @@ from relay.domain import (
 )
 from relay.domain.steer import Outcome
 
-SCHEMA_VERSION = 1
-MIGRATION = "migrations/001_initial.sql"
+MIGRATIONS = ("migrations/001_initial.sql", "migrations/002_decided_by.sql")
+SCHEMA_VERSION = len(MIGRATIONS)
 OUTCOMES: dict[str, Outcome] = {
     "accept": "accepted",
     "redirect": "redirected",
@@ -42,6 +42,7 @@ OUTCOMES: dict[str, Outcome] = {
 }
 
 RunOutcome = Literal["accepted", "rejected", "failed"]
+DecidedBy = Literal["developer", "relay"]
 
 
 class StoreError(RuntimeError):
@@ -58,6 +59,7 @@ class Developer:
 class StoredDecision:
     decision: SteerDecision
     decided_at: datetime
+    by: DecidedBy = "developer"
 
 
 @dataclass(frozen=True)
@@ -70,9 +72,16 @@ class StoredAttempt:
 
     @property
     def steering_seconds(self) -> float | None:
-        """Seconds from the card being shown to the final decision; None while pending."""
+        """Seconds from the card being shown to the final decision; None while pending.
+
+        Zero when Relay made the decision (a cascade step): no one was steering.
+        """
         final = [d for d in self.decisions if not isinstance(d.decision, MakeRule)]
-        return (final[-1].decided_at - self.shown_at).total_seconds() if final else None
+        if not final:
+            return None
+        if final[-1].by == "relay":
+            return 0.0
+        return (final[-1].decided_at - self.shown_at).total_seconds()
 
 
 @dataclass(frozen=True)
@@ -158,17 +167,16 @@ class RunStore:
         version: int = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version > SCHEMA_VERSION:
             raise StoreError(f"store schema {version} is newer than this Relay ({SCHEMA_VERSION})")
-        if version == SCHEMA_VERSION:
-            return
-        script = resources.files("relay.store").joinpath(MIGRATION).read_text(encoding="utf-8")
-        try:
-            self.db.executescript(
-                f"BEGIN IMMEDIATE;\n{script}\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
-            )
-        except sqlite3.Error:
-            if self.db.in_transaction:
-                self.db.execute("ROLLBACK")
-            raise
+        for number, migration in enumerate(MIGRATIONS[version:], start=version + 1):
+            script = resources.files("relay.store").joinpath(migration).read_text("utf-8")
+            try:
+                self.db.executescript(
+                    f"BEGIN IMMEDIATE;\n{script}\nPRAGMA user_version = {number};\nCOMMIT;"
+                )
+            except sqlite3.Error:
+                if self.db.in_transaction:
+                    self.db.execute("ROLLBACK")
+                raise
 
     def start_run(self, packet: WorkPacket, branch: str, developer: Developer, at: datetime) -> int:
         """Record a new run; `packet.base_sha` must already be the full SHA."""
@@ -217,7 +225,12 @@ class RunStore:
             )
 
     def record_decision(
-        self, run_id: int, attempt: int, decision: SteerDecision, decided_at: datetime
+        self,
+        run_id: int,
+        attempt: int,
+        decision: SteerDecision,
+        decided_at: datetime,
+        by: DecidedBy = "developer",
     ) -> None:
         with self.transaction() as db:
             sequence: int = db.execute(
@@ -226,8 +239,8 @@ class RunStore:
                 (run_id, attempt),
             ).fetchone()[0]
             db.execute(
-                "INSERT INTO decisions (run_id, attempt, sequence, kind, text, decided_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO decisions (run_id, attempt, sequence, kind, text, decided_at,"
+                " decided_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     run_id,
                     attempt,
@@ -235,6 +248,7 @@ class RunStore:
                     decision.kind,
                     decision_text(decision),
                     timestamp(decided_at),
+                    by,
                 ),
             )
 
@@ -259,11 +273,13 @@ class RunStore:
     def attempt_from(self, row: Any) -> StoredAttempt:
         decisions = tuple(
             StoredDecision(
-                decision_from(d["kind"], d["text"]), datetime.fromisoformat(d["decided_at"])
+                decision_from(d["kind"], d["text"]),
+                datetime.fromisoformat(d["decided_at"]),
+                d["decided_by"],
             )
             for d in self.db.execute(
-                "SELECT kind, text, decided_at FROM decisions WHERE run_id = ? AND attempt = ?"
-                " ORDER BY sequence",
+                "SELECT kind, text, decided_at, decided_by FROM decisions"
+                " WHERE run_id = ? AND attempt = ? ORDER BY sequence",
                 (row["run_id"], row["number"]),
             ).fetchall()
         )

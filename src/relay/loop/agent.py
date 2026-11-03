@@ -1,4 +1,9 @@
-"""The agent the loop drives: one session per packet, one turn per prompt."""
+"""The agent the loop drives: one session per model, one turn per prompt.
+
+A session's token budget is enforced from the session's own totals (`GET /session/{id}`)
+after every finished step, never by adding up step events: the event stream has no
+replay, so a dropped connection would lose steps (docs/decisions/0002).
+"""
 
 from collections import Counter
 from collections.abc import Callable
@@ -42,11 +47,26 @@ class OpenCodeAgent:
         self.client = client
         self.show = show
         self.directory: Path | None = None
+        self.budgets: dict[str, int] = {}
 
     def start(self, spec: SessionSpec) -> str:
         self.client.check_health()
         self.directory = spec.directory
-        return self.client.create_session(spec)
+        session = self.client.create_session(spec)
+        if spec.token_budget is not None:
+            self.budgets[session] = spec.token_budget
+        return session
+
+    def over_budget(self, session: str) -> str | None:
+        """Interrupt the session when its total is over budget, and say so."""
+        budget = self.budgets.get(session)
+        if budget is None:
+            return None
+        used = self.client.usage(session).tokens
+        if used <= budget:
+            return None
+        self.client.interrupt(session)
+        return f"token budget exceeded: {used:,} of {budget:,} tokens; interrupted"
 
     def relative(self, path: str) -> str:
         if self.directory is not None and Path(path).is_relative_to(self.directory):
@@ -55,6 +75,7 @@ class OpenCodeAgent:
 
     def turn(self, session: str, prompt: str) -> TurnResult:
         failure: str | None = None
+        exceeded: str | None = None
         tools: Counter[str] = Counter()
         files: list[str] = []
         seen: set[str] = set()
@@ -73,11 +94,15 @@ class OpenCodeAgent:
                     and self.relative(path) not in files
                 ):
                     files.append(self.relative(path))
-            elif event.type == "session.error":
+            elif part.get("type") == "step-finish" and exceeded is None:
+                exceeded = self.over_budget(session)
+                if exceeded is not None:
+                    self.show(f"  {exceeded}")
+            elif event.type == "session.error" and exceeded is None:
                 failure = error_message(event)
                 self.show(f"  error: {failure}")
         self.show(turn_summary(tools, files))
-        return TurnResult(failure)
+        return TurnResult(exceeded or failure)
 
     def usage(self, session: str) -> Usage:
         return self.client.usage(session)
