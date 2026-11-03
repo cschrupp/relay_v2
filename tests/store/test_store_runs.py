@@ -194,7 +194,7 @@ def test_schema_is_created_once_and_newer_schemas_are_refused(tmp_path: Path) ->
     RunStore(path).close()
     RunStore(path).close()
     db = sqlite3.connect(path)
-    db.execute("PRAGMA user_version = 2")
+    db.execute("PRAGMA user_version = 3")
     db.close()
 
     with pytest.raises(StoreError, match="newer than this Relay"):

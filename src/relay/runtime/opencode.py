@@ -41,10 +41,13 @@ class OpenCodeError(RuntimeError):
 
 @dataclass(frozen=True)
 class SessionSpec:
+    """`token_budget` caps the session's total tokens; the caller enforces it."""
+
     directory: Path
     agent: str
     provider: str
     model: str
+    token_budget: int | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,11 @@ class Usage:
     cache_write_tokens: int
     cost_usd: Decimal | None
     cost_source: CostSource | None
+
+    @property
+    def tokens(self) -> int:
+        """Tokens counted against a budget: input, output and reasoning."""
+        return self.input_tokens + self.output_tokens + self.reasoning_tokens
 
 
 def as_object(value: object) -> dict[str, Any]:

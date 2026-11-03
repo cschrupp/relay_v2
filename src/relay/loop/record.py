@@ -15,7 +15,7 @@ from pathlib import Path
 from relay.domain import DriftCard, RunRecord, SteerDecision, WorkPacket
 from relay.drift.git import GitError, run_git
 from relay.loop.workspace import discard_packet, git_common_dir
-from relay.store.runs import Developer, RunOutcome, RunStore, StoreError
+from relay.store.runs import DecidedBy, Developer, RunOutcome, RunStore, StoreError
 
 STORE_FILE = "relay/runs.sqlite"
 
@@ -63,8 +63,8 @@ class RunLog:
     def attempt(self, number: int, record: RunRecord, card: DriftCard) -> None:
         self.store.record_attempt(self.current(), number, record, card, self.clock())
 
-    def decision(self, number: int, decision: SteerDecision) -> None:
-        self.store.record_decision(self.current(), number, decision, self.clock())
+    def decision(self, number: int, decision: SteerDecision, by: DecidedBy = "developer") -> None:
+        self.store.record_decision(self.current(), number, decision, self.clock(), by)
 
     def finish(self, outcome: RunOutcome, pull_request: str | None = None) -> None:
         self.store.finish_run(self.current(), outcome, self.clock(), pull_request)
