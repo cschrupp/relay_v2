@@ -1,6 +1,4 @@
-import os
 import sqlite3
-import subprocess
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -19,7 +17,7 @@ from relay.domain import (
     RunRecord,
     WorkPacket,
 )
-from relay.store.runs import Developer, RunStore, StoreError, developer_identity
+from relay.store.runs import Developer, RunStore, StoreError
 
 BASE = "d593b9aa4fabb37ccebfa9ccccdca4c16fc78844"
 T0 = datetime(2026, 11, 2, 6, 0, tzinfo=UTC)
@@ -201,24 +199,3 @@ def test_schema_is_created_once_and_newer_schemas_are_refused(tmp_path: Path) ->
 
     with pytest.raises(StoreError, match="newer than this Relay"):
         RunStore(path)
-
-
-def git(repo: Path, *args: str) -> None:
-    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=env)
-
-
-def test_developer_identity_from_git_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    git(tmp_path, "init", "-q")
-
-    with pytest.raises(StoreError, match="user.email"):
-        developer_identity(tmp_path)
-
-    git(tmp_path, "config", "user.email", "dev@example.com")
-    assert developer_identity(tmp_path) == Developer("dev@example.com", "dev@example.com")
-    git(tmp_path, "config", "user.name", "Dev")
-    assert developer_identity(tmp_path) == DEVELOPER

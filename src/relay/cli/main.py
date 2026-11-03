@@ -11,6 +11,7 @@ from pathlib import Path
 
 from relay.cli.format import format_history, format_hygiene, format_report, format_tidy
 from relay.cli.run_command import add_run_arguments, run_command
+from relay.cli.runs_command import add_runs_arguments, runs_command
 from relay.domain import RulesError, parse_rules
 from relay.domain.rules import RULES_PATH
 from relay.drift.git import GitError, read_optional
@@ -58,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     tidy.add_argument("--apply", action="store_true", help="archive and delete them")
     add_stale_days(tidy)
     add_run_arguments(commands.add_parser("run", help="run one work packet and steer it"))
+    add_runs_arguments(commands.add_parser("runs", help="recent runs, their cost and steering"))
     return parser
 
 
@@ -103,6 +105,8 @@ def run(args: argparse.Namespace) -> tuple[str, int]:
         return run_tidy(args)
     if args.command == "run":
         return run_command(args)
+    if args.command == "runs":
+        return runs_command(args)
     if args.drift_command == "history":
         history = build_history(args.repo, args.rev, args.root, args.budget, args.every)
         return (json.dumps(asdict(history), indent=2) if args.json else format_history(history)), 0
