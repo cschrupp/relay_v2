@@ -1,0 +1,28 @@
+# Measurement task 6 of 12 (issue #37), configuration B.
+# Run: relay run packets/measure/06-small-costs.yaml --model openrouter/anthropic/claude-sonnet-5.5
+# Before running, set base_sha to main's head so the task starts from current work.
+goal: >-
+  Costs under one cent print as `$0.0000` on the drift card, in pull request bodies
+  and in `relay runs`. Print every cost through one shared formatter that keeps four
+  decimals from one cent up and two significant digits below (e.g. `$0.000042`), and
+  `$0` for zero. See issue #37.
+issue: 37
+base_sha: "39b9e563a2f93f24110be859cf9e203bcacbc3a8"
+allowed_paths:
+  - src/relay/loop/present.py
+  - src/relay/cli/runs_command.py
+  - tests/loop/**
+  - tests/cli/**
+expected_lines:
+  source: 30
+  tests: 30
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 200000
+role: implementer
+tier: cheap

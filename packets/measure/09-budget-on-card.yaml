@@ -1,0 +1,26 @@
+# Measurement task 9 of 12 (issue #40), configuration A and C.
+# Run: relay run packets/measure/09-budget-on-card.yaml   (A); for C, see the tracking issue
+# Before running, set base_sha to main's head so the task starts from current work.
+goal: >-
+  Add one line to the drift card under the agent's spend: tokens used by the packet
+  so far over every session, against the packet's token budget, e.g. `Budget: 23,056
+  of 200,000 tokens (12%)`. Count tokens the way the budget is enforced (input +
+  output + reasoning). See issue #40.
+issue: 40
+base_sha: "39b9e563a2f93f24110be859cf9e203bcacbc3a8"
+allowed_paths:
+  - src/relay/loop/**
+  - tests/loop/**
+expected_lines:
+  source: 30
+  tests: 30
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 200000
+role: implementer
+tier: cheap
