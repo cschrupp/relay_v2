@@ -116,7 +116,7 @@ def close_workspace(workspace: Workspace, keep_branch: bool) -> None:
         run_git(workspace.repo, "branch", "-q", "-D", workspace.branch)
 
 
-def discard_packet(repo: Path, branch: str) -> list[str]:
+def discard_packet(repo: Path, branch: str, keep_branch: bool = False) -> list[str]:
     """Remove whatever is left of a packet's worktree and branch; return what was removed."""
     removed: list[str] = []
     path = worktree_path(repo, branch)
@@ -124,6 +124,8 @@ def discard_packet(repo: Path, branch: str) -> list[str]:
         run_git(repo, "worktree", "remove", "--force", str(path))
         removed.append(f"worktree {path}")
     run_git(repo, "worktree", "prune")
+    if keep_branch:
+        return removed
     try:
         run_git(repo, "rev-parse", "--verify", "-q", f"refs/heads/{branch}")
     except GitError:
