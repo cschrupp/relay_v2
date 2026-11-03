@@ -1,4 +1,5 @@
-"""`relay run PACKET`: the interactive steering loop on one work packet."""
+"""`relay run PACKET`: the interactive steering loop on one work packet, recorded in the
+repository's run store."""
 
 import argparse
 from pathlib import Path
@@ -7,9 +8,11 @@ from relay.domain import PacketError, load_work_packet
 from relay.drift.git import GitError
 from relay.loop.agent import OpenCodeAgent
 from relay.loop.publish import GitHubPublisher, PublishError, issue_title
+from relay.loop.record import RunLog, developer_identity, store_path
 from relay.loop.steer import AgentSettings, Console, run_packet
 from relay.loop.workspace import WorkspaceError
 from relay.runtime.opencode import OpenCodeClient, OpenCodeError
+from relay.store.runs import RunStore, StoreError
 
 DEFAULT_OPENCODE = "http://127.0.0.1:4096"
 
@@ -32,24 +35,46 @@ def add_run_arguments(run: argparse.ArgumentParser) -> None:
 def run_command(args: argparse.Namespace) -> tuple[str, int]:
     console = Console(ask=input, show=print)
     try:
-        packet = load_work_packet(args.packet)
-        provider, model = args.model
-        settings = AgentSettings(args.agent or packet.role, provider, model)
-        client = OpenCodeClient(args.opencode)
-        try:
-            agent = OpenCodeAgent(client, console.show)
-            result = run_packet(
-                args.repo,
-                packet,
-                settings,
-                agent,
-                GitHubPublisher(),
-                console,
-                lambda number: issue_title(args.repo, number),
-            )
-        finally:
-            client.close()
-    except (PacketError, WorkspaceError, OpenCodeError, PublishError, GitError) as error:
+        path = store_path(args.repo)
+    except GitError as error:
         return f"relay run stopped: {error}", 2
+    try:
+        message = steer_packet(args, console, path)
+    except (
+        PacketError,
+        WorkspaceError,
+        OpenCodeError,
+        PublishError,
+        GitError,
+        StoreError,
+    ) as error:
+        return f"relay run stopped: {error}\nRun store: {path}", 2
+    except KeyboardInterrupt:
+        pending = "Interrupted; the run stays pending and the next relay run offers cleanup."
+        return f"\n{pending}\nRun store: {path}", 130
+    return f"{message}\nRun store: {path}", 0
+
+
+def steer_packet(args: argparse.Namespace, console: Console, path: Path) -> str:
+    packet = load_work_packet(args.packet)
+    provider, model = args.model
+    settings = AgentSettings(args.agent or packet.role, provider, model)
+    developer = developer_identity(args.repo)
+    store = RunStore(path)
+    client = OpenCodeClient(args.opencode)
+    try:
+        result = run_packet(
+            args.repo,
+            packet,
+            settings,
+            OpenCodeAgent(client, console.show),
+            GitHubPublisher(),
+            console,
+            lambda number: issue_title(args.repo, number),
+            RunLog(store, developer),
+        )
+    finally:
+        client.close()
+        store.close()
     outcome = result.records[-1].outcome if result.records else "no attempt"
-    return f"Packet {result.branch}: {outcome} after {len(result.records)} attempt(s).", 0
+    return f"Packet {result.branch}: {outcome} after {len(result.records)} attempt(s)."

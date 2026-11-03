@@ -8,11 +8,15 @@ attempt -> commit on the packet branch -> drift card + acceptance checks -> deci
 - `reject`           drop the packet: worktree and branch are deleted.
 The worktree is removed whenever the packet ends. If the loop is interrupted by an
 error, the worktree and branch are left as they are for inspection.
+With a `RunLog`, the run, every attempt and every decision are recorded as they happen
+(see `relay.loop.record`).
 """
 
+import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 
 from relay.domain import (
@@ -38,6 +42,7 @@ from relay.loop.present import (
     redirect_prompt,
 )
 from relay.loop.publish import Publisher
+from relay.loop.record import RunLog, recover_pending
 from relay.loop.rules import apply_rule
 from relay.loop.workspace import (
     Workspace,
@@ -49,6 +54,7 @@ from relay.loop.workspace import (
     unprotect,
 )
 from relay.runtime.opencode import SessionSpec, Usage
+from relay.store.runs import StoreError
 
 PROMPT = "accept [reason] | redirect <text> | rule <spec> | reject > "
 OUTCOMES: dict[str, Outcome] = {
@@ -100,10 +106,21 @@ def parse_decision(line: str) -> SteerDecision | None:
     return None
 
 
+def unrecorded(decision: SteerDecision) -> None:
+    return None
+
+
 def decide(
-    repo: Path, console: Console, needs_reason: bool, rules: list[str]
+    repo: Path,
+    console: Console,
+    needs_reason: bool,
+    rules: list[str],
+    record: Callable[[SteerDecision], None] = unrecorded,
 ) -> Accept | Redirect | Reject:
-    """Ask until the developer accepts, redirects or rejects; write rules on the way."""
+    """Ask until the developer accepts, redirects or rejects; write rules on the way.
+
+    `record` is called with each rule once written, and with the final decision.
+    """
     while True:
         decision = parse_decision(console.ask(PROMPT))
         if decision is None:
@@ -111,9 +128,11 @@ def decide(
         elif isinstance(decision, MakeRule):
             apply_rule(repo, decision.spec, console.confirm, console.show)
             rules.append(decision.spec)
+            record(decision)
         elif isinstance(decision, Accept) and needs_reason and decision.reason is None:
             console.show("This card has blocking findings or failed checks: accept <reason>.")
         else:
+            record(decision)
             return decision
 
 
@@ -147,6 +166,14 @@ def attempt(
     return card, run_checks(workspace.path, packet.acceptance_commands), turn
 
 
+def record_failure(log: RunLog | None) -> None:
+    """Close the run as failed; the error that ended it is the one to report."""
+    if log is None or log.run_id is None:
+        return
+    with contextlib.suppress(StoreError):
+        log.finish("failed")
+
+
 def run_packet(
     repo: Path,
     packet: WorkPacket,
@@ -155,11 +182,16 @@ def run_packet(
     publisher: Publisher,
     console: Console,
     issue_titles: Callable[[int], str | None] | None = None,
+    log: RunLog | None = None,
 ) -> PacketResult:
     """Run the packet until the developer accepts or rejects it.
 
-    `issue_titles` looks up the packet's issue title for the commit and PR title.
+    `issue_titles` looks up the packet's issue title for the commit and PR title. With
+    `log`, runs a crash left pending are offered for cleanup first, then this run is
+    recorded.
     """
+    if log is not None:
+        recover_pending(repo, log, console.confirm, console.show)
     issue_title = issue_titles(packet.issue) if issue_titles and packet.issue else None
     workspace = open_workspace(repo, packet)
     packet = packet.model_copy(update={"base_sha": workspace.base_sha})
@@ -168,13 +200,17 @@ def run_packet(
     console.show(f"Packet branch {workspace.branch} at {workspace.base_sha}")
     spec = SessionSpec(workspace.path, settings.agent, settings.provider, settings.model)
     try:
+        if log is not None:
+            log.start(packet, workspace.branch)
         session = agent.start(spec)
     except Exception:
         close_workspace(workspace, keep_branch=False)
+        record_failure(log)
         raise
     try:
-        return steer(workspace, packet, settings, agent, session, publisher, console, result)
+        return steer(workspace, packet, settings, agent, session, publisher, console, result, log)
     except Exception:
+        record_failure(log)
         if not has_work(workspace):
             close_workspace(workspace, keep_branch=False)
             console.show(f"Stopped before any change; removed {workspace.branch} and its worktree.")
@@ -196,6 +232,7 @@ def steer(
     publisher: Publisher,
     console: Console,
     result: PacketResult,
+    log: RunLog | None = None,
 ) -> PacketResult:
     """Attempt, show the card, decide; repeat until accepted or rejected."""
     repo = workspace.repo
@@ -213,22 +250,24 @@ def steer(
         card_text = format_card(card, checks, turn.failure, spend)
         console.show(card_text)
         result.cards.append(card)
-        needs_reason = card.blocking or not all(check.passed for check in checks)
-        decision = decide(repo, console, needs_reason, result.rules)
-        result.records.append(
-            RunRecord(
-                provider=settings.provider,
-                model=settings.model,
-                role=packet.role,
-                tier=packet.tier,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cost_usd=cost,
-                cost_source=usage.cost_source if cost is not None else None,
-                outcome=OUTCOMES[decision.kind],
-                accept_reason=decision.reason if isinstance(decision, Accept) else None,
-            )
+        record = RunRecord(
+            provider=settings.provider,
+            model=settings.model,
+            role=packet.role,
+            tier=packet.tier,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+            cost_source=usage.cost_source if cost is not None else None,
         )
+        if log is not None:
+            log.attempt(number, record, card)
+        needs_reason = card.blocking or not all(check.passed for check in checks)
+        noted = partial(log.decision, number) if log is not None else unrecorded
+        decision = decide(repo, console, needs_reason, result.rules, noted)
+        reason = decision.reason if isinstance(decision, Accept) else None
+        update = {"outcome": OUTCOMES[decision.kind], "accept_reason": reason}
+        result.records.append(record.model_copy(update=update))
         if isinstance(decision, Redirect):
             prompt = redirect_prompt(decision.text, card_text)
             continue
@@ -241,5 +280,8 @@ def steer(
             )
             result.pull_request = publisher.publish(workspace, result.title, body)
             console.show(f"Pull request: {result.pull_request}")
+        if log is not None:
+            outcome = "accepted" if isinstance(decision, Accept) else "rejected"
+            log.finish(outcome, result.pull_request)
         close_workspace(workspace, keep_branch=isinstance(decision, Accept))
         return result

@@ -48,6 +48,16 @@ def branch_name(packet: WorkPacket) -> str:
     return f"relay/{packet.issue}-{slug(packet.goal)}"
 
 
+def git_common_dir(repo: Path) -> Path:
+    """The directory all of the repository's worktrees share (`.git` of the main one)."""
+    common = Path(run_git(repo, "rev-parse", "--git-common-dir").decode().strip())
+    return (repo / common).resolve()
+
+
+def worktree_path(repo: Path, branch: str) -> Path:
+    return git_common_dir(repo) / WORKTREE_DIRECTORY / branch.replace("/", "-")
+
+
 def open_workspace(repo: Path, packet: WorkPacket) -> Workspace:
     """Resolve the base to its full SHA, then create the packet's branch and worktree."""
     base = resolve_commit(repo, packet.base_sha)
@@ -58,8 +68,7 @@ def open_workspace(repo: Path, packet: WorkPacket) -> Workspace:
         pass
     else:
         raise WorkspaceError(f"branch {branch} already exists; finish it or remove it first")
-    common = Path(run_git(repo, "rev-parse", "--git-common-dir").decode().strip())
-    path = (repo / common).resolve() / WORKTREE_DIRECTORY / branch.replace("/", "-")
+    path = worktree_path(repo, branch)
     run_git(repo, "worktree", "add", "-q", "-b", branch, str(path), base)
     return Workspace(repo, path, branch, base)
 
@@ -105,3 +114,19 @@ def close_workspace(workspace: Workspace, keep_branch: bool) -> None:
     run_git(workspace.repo, "worktree", "remove", "--force", str(workspace.path))
     if not keep_branch:
         run_git(workspace.repo, "branch", "-q", "-D", workspace.branch)
+
+
+def discard_packet(repo: Path, branch: str) -> list[str]:
+    """Remove whatever is left of a packet's worktree and branch; return what was removed."""
+    removed: list[str] = []
+    path = worktree_path(repo, branch)
+    if path.exists():
+        run_git(repo, "worktree", "remove", "--force", str(path))
+        removed.append(f"worktree {path}")
+    run_git(repo, "worktree", "prune")
+    try:
+        run_git(repo, "rev-parse", "--verify", "-q", f"refs/heads/{branch}")
+    except GitError:
+        return removed
+    run_git(repo, "branch", "-q", "-D", branch)
+    return [*removed, f"branch {branch}"]

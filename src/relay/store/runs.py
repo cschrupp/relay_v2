@@ -12,7 +12,6 @@ final decision on it) and the run's total cost.
 """
 
 import sqlite3
-import subprocess
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -104,21 +103,6 @@ class StoredRun:
         costs = [attempt.record.cost_usd for attempt in self.attempts]
         known = [cost for cost in costs if cost is not None]
         return sum(known, Decimal(0)) if len(known) == len(costs) else None
-
-
-def developer_identity(repo: Path) -> Developer:
-    """The developer as git knows them in this repository."""
-
-    def config(key: str) -> str:
-        done = subprocess.run(
-            ["git", "-C", str(repo), "config", "--get", key], capture_output=True, text=True
-        )
-        return done.stdout.strip()
-
-    name, email = config("user.name"), config("user.email")
-    if not email:
-        raise StoreError("git config user.email is not set; Relay records who steered each run")
-    return Developer(name or email, email)
 
 
 def timestamp(moment: datetime) -> str:
@@ -321,6 +305,13 @@ class RunStore:
         if row is None:
             raise StoreError(f"no run {run_id}")
         return self.run_from(row)
+
+    def runs(self, limit: int | None = None) -> list[StoredRun]:
+        """Runs newest first; all of them when `limit` is None."""
+        rows = self.db.execute(
+            "SELECT * FROM packet_runs ORDER BY id DESC LIMIT ?", (-1 if limit is None else limit,)
+        ).fetchall()
+        return [self.run_from(row) for row in rows]
 
     def pending_runs(self) -> list[StoredRun]:
         """Runs that never finished, oldest first: what a crash leaves behind."""
