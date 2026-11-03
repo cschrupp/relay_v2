@@ -101,3 +101,4 @@ was felt. Reproduce with
 
 33. Governance is only worth its friction when it catches real problems. Measure it: human "proceed" turns, rework, context reloads, tokens, escaped defects.
 34. Report cost per accepted change, not cost per token. Cheaper models only save money if retries and re-steering do not eat the savings.
+35. Agents underestimate task size consistently. Across PRs #12–#29, actual net source lines ran 1.3–1.7× Claude Code's own estimate at the start of each issue: calibration, not bloat. Apply about 1.5× to a raw estimate. This is the first measured data point on task size.

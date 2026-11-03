@@ -12,7 +12,7 @@ spent, and each session is interrupted when it goes over what is left of it.
 The worktree is removed whenever the packet ends. If the loop is interrupted by an
 error, the worktree and branch are left as they are for inspection.
 With a `RunLog`, the run, every attempt and every decision are recorded as they happen
-(see `relay.loop.record`).
+(see `relay.loop.record`). The developer's prompt is in `relay.loop.decide`.
 """
 
 import contextlib
@@ -25,11 +25,9 @@ from pathlib import Path
 from relay.domain import (
     Accept,
     DriftCard,
-    MakeRule,
     Redirect,
     Reject,
     RunRecord,
-    SteerDecision,
     WorkPacket,
 )
 from relay.domain.steer import CostSource, Outcome
@@ -45,6 +43,8 @@ from relay.loop.cascade import (
     retry_prompt,
 )
 from relay.loop.checks import CheckResult, run_checks
+from relay.loop.decide import Console, decide, unrecorded
+from relay.loop.decide import parse_decision as parse_decision
 from relay.loop.present import (
     Spend,
     format_card,
@@ -55,7 +55,6 @@ from relay.loop.present import (
 )
 from relay.loop.publish import Publisher
 from relay.loop.record import RunLog, recover_pending
-from relay.loop.rules import apply_rule
 from relay.loop.workspace import (
     Workspace,
     close_workspace,
@@ -68,7 +67,6 @@ from relay.loop.workspace import (
 from relay.runtime.opencode import SessionSpec, Usage
 from relay.store.runs import StoreError
 
-PROMPT = "accept [reason] | redirect <text> | rule <spec> | reject > "
 OUTCOMES: dict[str, Outcome] = {
     "accept": "accepted",
     "redirect": "redirected",
@@ -85,64 +83,6 @@ class PacketResult:
     rules: list[str] = field(default_factory=lambda: [])
     pull_request: str | None = None
     title: str = ""
-
-
-@dataclass
-class Console:
-    ask: Callable[[str], str]
-    show: Callable[[str], None]
-
-    def confirm(self, question: str) -> bool:
-        return self.ask(question).strip().lower() in {"y", "yes"}
-
-
-def parse_decision(line: str) -> SteerDecision | None:
-    """Read `accept [reason]`, `redirect <text>`, `rule <spec>` or `reject`."""
-    word, _, rest = line.strip().partition(" ")
-    rest = rest.strip().strip("\"'").strip()
-    if word == "accept":
-        return Accept(reason=rest or None)
-    if word == "reject" and not rest:
-        return Reject()
-    if word == "redirect" and rest:
-        return Redirect(text=rest)
-    if word == "rule" and rest:
-        return MakeRule(spec=rest)
-    return None
-
-
-def unrecorded(decision: SteerDecision) -> None:
-    return None
-
-
-def decide(
-    repo: Path,
-    console: Console,
-    needs_reason: bool,
-    rules: list[str],
-    record: Callable[[SteerDecision], None] = unrecorded,
-    can_redirect: bool = True,
-) -> Accept | Redirect | Reject:
-    """Ask until the developer accepts, redirects or rejects; write rules on the way.
-
-    `record` is called with each rule once written, and with the final decision.
-    `can_redirect` is False once the token budget is spent.
-    """
-    while True:
-        decision = parse_decision(console.ask(PROMPT))
-        if decision is None:
-            console.show("Say: accept [reason], redirect <text>, rule <spec> or reject.")
-        elif isinstance(decision, MakeRule):
-            apply_rule(repo, decision.spec, console.confirm, console.show)
-            rules.append(decision.spec)
-            record(decision)
-        elif isinstance(decision, Accept) and needs_reason and decision.reason is None:
-            console.show("This card has blocking findings or failed checks: accept <reason>.")
-        elif isinstance(decision, Redirect) and not can_redirect:
-            console.show("The packet's token budget is spent: accept, rule or reject.")
-        else:
-            record(decision)
-            return decision
 
 
 def spent_since(now: Usage, before: Usage | None) -> tuple[int, int, Decimal | None]:
