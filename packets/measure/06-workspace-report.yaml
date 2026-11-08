@@ -1,0 +1,33 @@
+# Measurement task 6 of 12 (issue #47), configuration B.
+# Run: relay run packets/measure/06-workspace-report.yaml --model openrouter/anthropic/claude-sonnet-5.5
+# Before running, set base_sha to main's head so the task starts from current work.
+goal: >-
+  Add a workspace section to `relay drift report`, read from the working tree:
+  untracked files counted by top-level folder, stray environments (directories with
+  a `pyvenv.cfg`, or named `node_modules`, except the root `.venv`), temp-pattern
+  folders (tmp, temp, scratch, old, backup, tmp*, backup*, *.bak, *.old, *~), and
+  the five largest ignored folders with their size. Include it in `--json` as
+  "workspace". When the structural metrics cannot run, still print the hygiene and
+  workspace sections and say why the structure was skipped, so the report works on
+  any git repository. See issue #47.
+issue: 47
+base_sha: "39b9e563a2f93f24110be859cf9e203bcacbc3a8"
+allowed_paths:
+  - src/relay/drift/**
+  - src/relay/cli/format.py
+  - src/relay/cli/main.py
+  - tests/drift/**
+  - tests/cli/**
+expected_lines:
+  source: 110
+  tests: 80
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 500000
+role: implementer
+tier: cheap
