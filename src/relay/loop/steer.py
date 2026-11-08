@@ -53,7 +53,7 @@ from relay.loop.present import (
     pull_request_title,
     redirect_prompt,
 )
-from relay.loop.publish import Publisher
+from relay.loop.publish import Publisher, PullRequestLookup, branch_pull_request
 from relay.loop.record import RunLog, recover_pending
 from relay.loop.workspace import (
     Workspace,
@@ -133,6 +133,7 @@ def run_packet(
     issue_titles: Callable[[int], str | None] | None = None,
     log: RunLog | None = None,
     cascade: Cascade | None = None,
+    find_pull_request: PullRequestLookup = branch_pull_request,
 ) -> PacketResult:
     """Run the packet until the developer accepts or rejects it.
 
@@ -142,7 +143,7 @@ def run_packet(
     attempts are retried and escalated before the developer decides.
     """
     if log is not None:
-        recover_pending(repo, log, console.confirm, console.show)
+        recover_pending(repo, log, console.confirm, console.show, find_pull_request)
     issue_title = issue_titles(packet.issue) if issue_titles and packet.issue else None
     workspace = open_workspace(repo, packet)
     packet = packet.model_copy(update={"base_sha": workspace.base_sha})
