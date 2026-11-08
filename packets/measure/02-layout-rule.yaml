@@ -1,0 +1,36 @@
+# Measurement task 2 of 12 (issue #46), configuration B.
+# Run: relay run packets/measure/02-layout-rule.yaml --model openrouter/anthropic/claude-sonnet-5.5
+# Before running, set base_sha to main's head so the task starts from current work.
+goal: >-
+  Add a `layout` rule to `.relay/rules.yaml`: gitignore-style patterns for where
+  files may exist (absent means no check). The drift card warns with a `stray_file`
+  finding for each file the diff adds that matches no pattern, reading the layout from
+  the packet's base commit. Give each packet a scratch directory `.relay-scratch/` at
+  the root of its worktree: name it in the first prompt as the place for temporary
+  files, never commit it, and make sure it is gone after accept, reject and cleanup
+  of a crashed run. See issue #46.
+issue: 46
+base_sha: "39b9e563a2f93f24110be859cf9e203bcacbc3a8"
+allowed_paths:
+  - src/relay/domain/rules.py
+  - src/relay/domain/card.py
+  - src/relay/drift/card.py
+  - src/relay/loop/workspace.py
+  - src/relay/loop/present.py
+  - src/relay/loop/steer.py
+  - tests/domain/**
+  - tests/drift/**
+  - tests/loop/**
+expected_lines:
+  source: 75
+  tests: 70
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 500000
+role: implementer
+tier: cheap

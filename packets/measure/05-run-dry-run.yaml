@@ -1,0 +1,29 @@
+# Measurement task 5 of 12 (issue #36), configuration A.
+# Run: relay run packets/measure/05-run-dry-run.yaml
+# Before running, set base_sha to main's head so the task starts from current work.
+goal: >-
+  Add `--dry-run` to `relay run`: load the packet, resolve the full base SHA, the
+  branch name, the route (agent, starting model, escalation model, cascade on or
+  off) and the token budget, print them with the agent's first prompt, and exit
+  without creating a branch, a worktree, a store record or an OpenCode session. See
+  issue #36.
+issue: 36
+base_sha: "39b9e563a2f93f24110be859cf9e203bcacbc3a8"
+allowed_paths:
+  - src/relay/cli/**
+  - src/relay/loop/**
+  - tests/cli/**
+  - tests/loop/**
+expected_lines:
+  source: 50
+  tests: 40
+acceptance_commands:
+  - uv run ruff format --check .
+  - uv run ruff check .
+  - uv run pyright
+  - uv run lint-imports
+  - uv run python tools/check_function_size.py
+  - uv run pytest
+token_budget: 300000
+role: implementer
+tier: cheap
